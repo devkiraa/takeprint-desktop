@@ -5,6 +5,11 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g. 1.0.0)'
+        required: true
+        default: '1.0.0'
 
 permissions:
   contents: write
@@ -17,6 +22,16 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+
+      - name: Determine Release Tag
+        id: tag
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "version=v${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "version=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+          fi
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -43,6 +58,8 @@ jobs:
       - name: Create GitHub Release and Upload Artifact
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.tag.outputs.version }}
+          name: Release ${{ steps.tag.outputs.version }}
           files: build/bin/TakePrint-Desktop.exe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
