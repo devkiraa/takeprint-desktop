@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"syscall"
 )
 
 // psPrinter is the JSON shape returned by PowerShell's Get-Printer.
@@ -35,6 +36,7 @@ func (s *Service) ListPrinters() ([]PrinterInfo, error) {
 	// Wrap in @() to guarantee an array even for a single printer.
 	psCmd := `@(Get-Printer) | Select-Object Name, PrinterStatus, Type | ConvertTo-Json -Depth 2 -Compress`
 	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", psCmd)
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 	output, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("failed to list printers: %w", err)
@@ -63,6 +65,7 @@ func (s *Service) ListPrinters() ([]PrinterInfo, error) {
 	// Determine default printer.
 	defaultCmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command",
 		`(Get-CimInstance -ClassName Win32_Printer -Filter "Default=True").Name`)
+	defaultCmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 	defaultOut, _ := defaultCmd.Output()
 	defaultName := strings.TrimSpace(string(defaultOut))
 
@@ -136,6 +139,7 @@ func (s *Service) PrintPDF(printerName, filePath string, opts PrintOptions) erro
 
 		args = append(args, filePath)
 		cmd := exec.Command(sumatraPath, args...)
+		cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 		if output, err := cmd.CombinedOutput(); err != nil {
 			return fmt.Errorf("SumatraPDF print failed: %w — %s", err, string(output))
 		}
@@ -151,6 +155,7 @@ func (s *Service) PrintPDF(printerName, filePath string, opts PrintOptions) erro
 			fmt.Sprintf("--print-to-destination=%s", printerName),
 			filePath,
 		)
+		cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 		if output, err := cmd.CombinedOutput(); err != nil {
 			return fmt.Errorf("Microsoft Edge print failed: %w — %s", err, string(output))
 		}
@@ -166,6 +171,7 @@ func (s *Service) PrintPDF(printerName, filePath string, opts PrintOptions) erro
 			fmt.Sprintf("--print-to-destination=%s", printerName),
 			filePath,
 		)
+		cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 		if output, err := cmd.CombinedOutput(); err != nil {
 			return fmt.Errorf("Google Chrome print failed: %w — %s", err, string(output))
 		}
@@ -178,6 +184,7 @@ func (s *Service) PrintPDF(printerName, filePath string, opts PrintOptions) erro
 		filePath, printerName,
 	)
 	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", psCmd)
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("PowerShell print failed: %w — %s", err, string(output))
 	}
@@ -202,6 +209,7 @@ func findSumatraPDF() (string, error) {
 		}
 		// LookPath might not work for absolute paths; try Command directly.
 		cmd := exec.Command(p, "-h")
+		cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 		if err := cmd.Start(); err == nil {
 			_ = cmd.Process.Kill()
 			return p, nil

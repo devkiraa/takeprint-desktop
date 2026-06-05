@@ -407,6 +407,7 @@ func (a *App) SetAutoLaunch(enable bool) error {
 	}
 
 	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", psCmd)
+	hideWindow(cmd)
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("failed to toggle auto-launch registry: %w", err)
 	}
@@ -430,6 +431,7 @@ func (a *App) IsAutoLaunchEnabled() bool {
 	}
 	psCmd := `Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name 'TakePrint' -ErrorAction SilentlyContinue`
 	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", psCmd)
+	hideWindow(cmd)
 	out, err := cmd.Output()
 	if err != nil || len(out) == 0 {
 		return false
