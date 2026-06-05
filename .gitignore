@@ -1,0 +1,15 @@
+# Wails build output
+/build/bin/
+
+# Node/NPM dependencies and outputs
+/frontend/node_modules/
+/frontend/dist/
+
+# Local settings config
+/settings.json
+
+# Go binaries / IDEs
+*.exe
+*.exe~
+.idea/
+.vscode/

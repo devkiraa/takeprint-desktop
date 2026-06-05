@@ -1,0 +1,19 @@
+{
+  "name": "takeprint",
+  "outputfilename": "takeprint",
+  "frontend:install": "npm install",
+  "frontend:build": "npm run build",
+  "frontend:dev:watcher": "npm run dev",
+  "frontend:dev:serverUrl": "auto",
+  "author": {
+    "name": "TakePrint",
+    "email": ""
+  },
+  "info": {
+    "companyName": "TakePrint",
+    "productName": "TakePrint",
+    "productVersion": "1.0.0",
+    "copyright": "Copyright 2026",
+    "comments": "Local network printer sharing server"
+  }
+}

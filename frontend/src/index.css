@@ -1,0 +1,170 @@
+@import "tailwindcss";
+
+/* ============================================
+   TakePrint — Design System (Themed)
+   ============================================ */
+
+:root {
+  --color-bg-primary: #f8fafc; /* Slate 50 */
+  --color-bg-surface: #ffffff;
+  --color-surface-800: #f1f5f9; /* Slate 100 */
+  --color-surface-700: #e2e8f0; /* Slate 200 */
+  --color-surface-600: #cbd5e1; /* Slate 300 */
+  --color-surface-500: #94a3b8; /* Slate 400 */
+
+  --color-text-primary: #0f172a; /* Slate 900 */
+  --color-text-secondary: #334155; /* Slate 700 */
+  --color-text-muted: #64748b; /* Slate 500 */
+  --color-text-disabled: #94a3b8; /* Slate 400 */
+
+  --glass-gradient-start: rgba(255, 255, 255, 0.85);
+  --glass-gradient-end: rgba(248, 250, 252, 0.95);
+  --glass-border: rgba(99, 102, 241, 0.15);
+}
+
+.dark {
+  --color-bg-primary: #000000;
+  --color-bg-surface: #000000;
+  --color-surface-800: #080808;
+  --color-surface-700: #141414;
+  --color-surface-600: #1f1f1f;
+  --color-surface-500: #2b2b2b;
+
+  --color-text-primary: #ffffff;
+  --color-text-secondary: #e5e5e5;
+  --color-text-muted: #a3a3a3;
+  --color-text-disabled: #525252;
+
+  --glass-gradient-start: rgba(0, 0, 0, 1);
+  --glass-gradient-end: rgba(0, 0, 0, 1);
+  --glass-border: rgba(255, 255, 255, 0.1);
+}
+
+@theme {
+  --color-surface-950: var(--color-bg-primary);
+  --color-surface-900: var(--color-bg-surface);
+  --color-surface-800: var(--color-surface-800);
+  --color-surface-700: var(--color-surface-700);
+  --color-surface-600: var(--color-surface-600);
+  --color-surface-500: var(--color-surface-500);
+
+  --color-slate-200: var(--color-text-primary);
+  --color-slate-300: var(--color-text-secondary);
+  --color-slate-400: var(--color-text-muted);
+  --color-slate-500: var(--color-text-disabled);
+
+  --color-accent-400: #818cf8;
+  --color-accent-500: #6366f1;
+  --color-accent-600: #4f46e5;
+
+  --color-success-400: #4ade80;
+  --color-success-500: #22c55e;
+  --color-warn-400: #fbbf24;
+  --color-warn-500: #f59e0b;
+  --color-error-400: #f87171;
+  --color-error-500: #ef4444;
+
+  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+}
+
+/* ============================================
+   Base & Reset
+   ============================================ */
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-surface-600) transparent;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--color-bg-primary);
+  color: var(--color-text-secondary);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow: hidden;
+}
+
+#root {
+  width: 100vw;
+  height: 100vh;
+}
+
+/* ============================================
+   Utility Animations
+   ============================================ */
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 8px rgba(99, 102, 241, 0.3); }
+  50% { box-shadow: 0 0 20px rgba(99, 102, 241, 0.6); }
+}
+
+@keyframes slide-in {
+  from { opacity: 0; transform: translateX(-12px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.4s ease-out both;
+}
+
+.animate-slide-in {
+  animation: slide-in 0.3s ease-out both;
+}
+
+.animate-pulse-glow {
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+/* Glass card effect */
+.glass-card {
+  background: linear-gradient(
+    135deg,
+    var(--glass-gradient-start) 0%,
+    var(--glass-gradient-end) 100%
+  );
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--glass-border);
+  border-radius: 16px;
+  transition: border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+.glass-card:hover {
+  border-color: var(--color-border-hover);
+  box-shadow: 0 4px 24px rgba(99, 102, 241, 0.08);
+}
+
+/* Status dot pulse */
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  position: relative;
+}
+
+.status-dot::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  border: 1px solid currentColor;
+  opacity: 0;
+  animation: ping 1.5s ease-in-out infinite;
+}
+
+@keyframes ping {
+  0% { transform: scale(1); opacity: 0.5; }
+  100% { transform: scale(2); opacity: 0; }
+}
