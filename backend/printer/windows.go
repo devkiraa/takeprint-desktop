@@ -105,7 +105,7 @@ func (s *Service) PrintPDF(printerName, filePath string, opts PrintOptions) erro
 			"-silent",
 		}
 
-		// Build SumatraPDF print settings: e.g. "1x,pages=1-5,mono"
+		// Build SumatraPDF print settings: e.g. "1x,pages=1-5,mono,portrait,paper=A4,simplex"
 		var settings []string
 		if opts.Copies > 0 {
 			settings = append(settings, fmt.Sprintf("%dx", opts.Copies))
@@ -117,6 +117,17 @@ func (s *Service) PrintPDF(printerName, filePath string, opts PrintOptions) erro
 			settings = append(settings, "mono")
 		} else if opts.Color == "color" {
 			settings = append(settings, "color")
+		}
+		if opts.Orientation == "landscape" {
+			settings = append(settings, "landscape")
+		} else if opts.Orientation == "portrait" {
+			settings = append(settings, "portrait")
+		}
+		if opts.PaperSize != "" && opts.PaperSize != "default" {
+			settings = append(settings, fmt.Sprintf("paper=%s", opts.PaperSize))
+		}
+		if opts.Duplex == "duplexlong" || opts.Duplex == "duplexshort" || opts.Duplex == "simplex" {
+			settings = append(settings, opts.Duplex)
 		}
 
 		if len(settings) > 0 {

@@ -26,6 +26,9 @@ type PrintJob struct {
 	Pages       string `json:"pages"`
 	Color       string `json:"color"`
 	Copies      int    `json:"copies"`
+	Orientation string `json:"orientation,omitempty"`
+	PaperSize   string `json:"paperSize,omitempty"`
+	Duplex      string `json:"duplex,omitempty"`
 	Error       string `json:"error,omitempty"`
 }
 
@@ -276,6 +279,9 @@ func (s *Server) handlePrint(w http.ResponseWriter, r *http.Request) {
 	var printerName string
 	var pages string = "all"
 	var color string = "color"
+	var orientation string = "portrait"
+	var paperSize string = "A4"
+	var duplex string = "simplex"
 	var copies int = 1
 	var tmpPath string
 	var headerFilename string
@@ -343,6 +349,12 @@ func (s *Server) handlePrint(w http.ResponseWriter, r *http.Request) {
 				pages = val
 			case "color":
 				color = val
+			case "orientation":
+				orientation = val
+			case "paperSize":
+				paperSize = val
+			case "duplex":
+				duplex = val
 			case "copies":
 				if valInt, err := strconv.Atoi(val); err == nil && valInt > 0 {
 					copies = valInt
@@ -373,13 +385,16 @@ func (s *Server) handlePrint(w http.ResponseWriter, r *http.Request) {
 	}
 
 	opts := printer.PrintOptions{
-		Pages:  pages,
-		Color:  color,
-		Copies: copies,
+		Pages:       pages,
+		Color:       color,
+		Copies:      copies,
+		Orientation: orientation,
+		PaperSize:   paperSize,
+		Duplex:      duplex,
 	}
 
-	s.Logger(fmt.Sprintf("📥 Received print job: %s → %s (Pages: %s, Color: %s, Copies: %d)",
-		headerFilename, printerName, opts.Pages, opts.Color, opts.Copies))
+	s.Logger(fmt.Sprintf("📥 Received print job: %s → %s (Pages: %s, Color: %s, Copies: %d, Orientation: %s, PaperSize: %s, Duplex: %s)",
+		headerFilename, printerName, opts.Pages, opts.Color, opts.Copies, opts.Orientation, opts.PaperSize, opts.Duplex))
 
 	// Track job
 	jobID := fmt.Sprintf("job-%d", time.Now().UnixNano())
@@ -392,6 +407,9 @@ func (s *Server) handlePrint(w http.ResponseWriter, r *http.Request) {
 		Pages:       opts.Pages,
 		Color:       opts.Color,
 		Copies:      opts.Copies,
+		Orientation: opts.Orientation,
+		PaperSize:   opts.PaperSize,
+		Duplex:      opts.Duplex,
 	}
 	s.addJob(job)
 

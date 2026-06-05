@@ -179,6 +179,9 @@ export namespace server {
 	    pages: string;
 	    color: string;
 	    copies: number;
+	    orientation?: string;
+	    paperSize?: string;
+	    duplex?: string;
 	    error?: string;
 	
 	    static createFrom(source: any = {}) {
@@ -195,6 +198,9 @@ export namespace server {
 	        this.pages = source["pages"];
 	        this.color = source["color"];
 	        this.copies = source["copies"];
+	        this.orientation = source["orientation"];
+	        this.paperSize = source["paperSize"];
+	        this.duplex = source["duplex"];
 	        this.error = source["error"];
 	    }
 	}

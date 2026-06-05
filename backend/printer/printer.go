@@ -23,9 +23,12 @@ type PrinterInfo struct {
 
 // PrintOptions holds the settings for printing a PDF document.
 type PrintOptions struct {
-	Pages  string `json:"pages"`  // e.g. "all", "1-5", "1,2,5"
-	Color  string `json:"color"`  // "color" or "mono"
-	Copies int    `json:"copies"` // number of copies
+	Pages       string `json:"pages"`       // e.g. "all", "1-5", "1,2,5"
+	Color       string `json:"color"`       // "color" or "mono"
+	Copies      int    `json:"copies"`      // number of copies
+	Orientation string `json:"orientation"` // "portrait" or "landscape"
+	PaperSize   string `json:"paperSize"`   // e.g. "A4", "letter", "legal", "A5"
+	Duplex      string `json:"duplex"`      // "simplex", "duplexlong", "duplexshort"
 }
 
 // Service defines the cross-platform printer operations.
