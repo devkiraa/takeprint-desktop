@@ -84,6 +84,17 @@ export default function App() {
     return () => clearInterval(interval);
   }, []);
 
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        setShowSettings(false);
+        setShowQRModal(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
   const handleSaveName = async () => {
     if (!tempName.trim()) return;
     if (window.go?.main?.App?.UpdateServerName) {
@@ -134,7 +145,10 @@ export default function App() {
                   autoFocus
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') handleSaveName();
-                    if (e.key === 'Escape') setIsEditingName(false);
+                    if (e.key === 'Escape') {
+                      e.stopPropagation();
+                      setIsEditingName(false);
+                    }
                   }}
                 />
                 <button
@@ -457,7 +471,10 @@ function SettingsView({
                 autoFocus
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') onSaveServerName();
-                  if (e.key === 'Escape') setIsEditingName(false);
+                  if (e.key === 'Escape') {
+                    e.stopPropagation();
+                    setIsEditingName(false);
+                  }
                 }}
               />
               <button
