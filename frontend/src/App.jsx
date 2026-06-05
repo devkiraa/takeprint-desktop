@@ -91,8 +91,13 @@ export default function App() {
         setShowQRModal(false);
       }
     };
+    const preventContextMenu = (e) => e.preventDefault();
     window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    window.addEventListener('contextmenu', preventContextMenu);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('contextmenu', preventContextMenu);
+    };
   }, []);
 
   const handleSaveName = async () => {
