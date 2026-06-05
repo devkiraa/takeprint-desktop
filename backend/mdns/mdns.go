@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"strings"
 
 	"github.com/grandcat/zeroconf"
 )
@@ -24,19 +25,26 @@ func Start(serviceName string, port int, token string, logger func(string)) (*Se
 	// Resolve the machine's local IP for logging.
 	localIP := getLocalIP()
 
+	// Gather all active non-virtual IPs to publish in mDNS TXT.
+	nonVirtualIPs := getNonVirtualIPs()
+	if len(nonVirtualIPs) == 0 {
+		nonVirtualIPs = []string{localIP}
+	}
+	ipsStr := strings.Join(nonVirtualIPs, ",")
+
 	server, err := zeroconf.Register(
 		serviceName,                // Service instance name
 		"_localshareprint._tcp",    // Service type
 		"local.",                   // Domain
 		port,                       // Port
-		[]string{"version=1.0", "platform=desktop", "token=" + token}, // TXT records
+		[]string{"version=1.0", "platform=desktop", "token=" + token, "ips=" + ipsStr}, // TXT records
 		nil, // Use all network interfaces
 	)
 	if err != nil {
 		return nil, fmt.Errorf("mDNS registration failed: %w", err)
 	}
 
-	logger(fmt.Sprintf("📡 mDNS broadcasting '_localshareprint._tcp' on %s:%d", localIP, port))
+	logger(fmt.Sprintf("📡 mDNS broadcasting '_localshareprint._tcp' on %s:%d (Available IPs: %s)", localIP, port, ipsStr))
 
 	return &Server{zc: server, Logger: logger}, nil
 }
@@ -59,4 +67,40 @@ func getLocalIP() string {
 	}
 	defer conn.Close()
 	return conn.LocalAddr().(*net.UDPAddr).IP.String()
+}
+
+// getNonVirtualIPs returns non-loopback IPv4 addresses of the desktop machine, skipping virtual interfaces.
+func getNonVirtualIPs() []string {
+	var ips []string
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return ips
+	}
+	for _, iface := range ifaces {
+		name := strings.ToLower(iface.Name)
+		// Skip interfaces that are down or loopback
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		// Skip virtual adapters commonly used by VMs, containers, and WSL
+		if strings.Contains(name, "virtual") || strings.Contains(name, "vbox") ||
+			strings.Contains(name, "vmware") || strings.Contains(name, "docker") ||
+			strings.Contains(name, "wsl") || strings.Contains(name, "host-only") ||
+			strings.Contains(name, "vethernet") || strings.Contains(name, "vboxnet") {
+			continue
+		}
+
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, addr := range addrs {
+			if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() && !ipnet.IP.IsLinkLocalUnicast() {
+				if ipnet.IP.To4() != nil {
+					ips = append(ips, ipnet.IP.String())
+				}
+			}
+		}
+	}
+	return ips
 }
