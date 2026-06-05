@@ -259,40 +259,46 @@ export default function App() {
 
       {/* ===== MAIN CONTENT ===== */}
       <main className="flex-1 flex min-h-0 p-5 gap-5">
-        {showSettings ? (
-          <section className="flex-1 glass-card p-6 flex flex-col animate-fade-in">
-            <SettingsView
-              serverName={serverName}
-              onClose={() => setShowSettings(false)}
-              autoLaunch={autoLaunch}
-              onToggleAutoLaunch={handleToggleAutoLaunch}
-              onSaveServerName={handleSaveName}
-              tempName={tempName}
-              setTempName={setTempName}
-              isEditingName={isEditingName}
-              setIsEditingName={setIsEditingName}
-              theme={theme}
-              setTheme={setTheme}
-            />
-          </section>
-        ) : (
-          <>
-            {/* Left Column: Printers + Devices */}
-            <section className="w-[340px] shrink-0 flex flex-col gap-5 animate-fade-in">
-              <div className="glass-card p-5 flex flex-col flex-1 min-h-0">
-                <PrinterList remotePrinters={remotePrinters} />
-              </div>
-              <div className="glass-card p-5 flex flex-col h-[260px] shrink-0">
-                <DeviceList onRemotePrintersUpdate={handleRemotePrintersUpdate} />
-              </div>
-            </section>
+        {/* Settings View */}
+        <section
+          className="flex-1 glass-card p-6 flex flex-col animate-fade-in"
+          style={{ display: showSettings ? 'flex' : 'none' }}
+        >
+          <SettingsView
+            serverName={serverName}
+            onClose={() => setShowSettings(false)}
+            autoLaunch={autoLaunch}
+            onToggleAutoLaunch={handleToggleAutoLaunch}
+            onSaveServerName={handleSaveName}
+            tempName={tempName}
+            setTempName={setTempName}
+            isEditingName={isEditingName}
+            setIsEditingName={setIsEditingName}
+            theme={theme}
+            setTheme={setTheme}
+          />
+        </section>
 
-            {/* Middle Column: Print Queue */}
-            <section className="flex-1 glass-card p-5 flex flex-col animate-fade-in" style={{ animationDelay: '60ms' }}>
-              <JobQueue />
-            </section>
-          </>
-        )}
+        {/* Dashboard View */}
+        <div
+          className="flex-1 flex min-h-0 gap-5"
+          style={{ display: showSettings ? 'none' : 'flex' }}
+        >
+          {/* Left Column: Printers + Devices */}
+          <section className="w-[340px] shrink-0 flex flex-col gap-5 animate-fade-in">
+            <div className="glass-card p-5 flex flex-col flex-1 min-h-0">
+              <PrinterList remotePrinters={remotePrinters} />
+            </div>
+            <div className="glass-card p-5 flex flex-col h-[260px] shrink-0">
+              <DeviceList onRemotePrintersUpdate={handleRemotePrintersUpdate} />
+            </div>
+          </section>
+
+          {/* Middle Column: Print Queue */}
+          <section className="flex-1 glass-card p-5 flex flex-col animate-fade-in" style={{ animationDelay: '60ms' }}>
+            <JobQueue />
+          </section>
+        </div>
 
         {/* Right Column: Console */}
         {showConsole && (
