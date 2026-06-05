@@ -16,7 +16,7 @@ type Server struct {
 
 // Start registers the _localshareprint._tcp mDNS service on the given port.
 // The logger callback is invoked with status messages for the frontend console.
-func Start(serviceName string, port int, logger func(string)) (*Server, error) {
+func Start(serviceName string, port int, token string, logger func(string)) (*Server, error) {
 	if logger == nil {
 		logger = func(msg string) { log.Println(msg) }
 	}
@@ -29,7 +29,7 @@ func Start(serviceName string, port int, logger func(string)) (*Server, error) {
 		"_localshareprint._tcp",    // Service type
 		"local.",                   // Domain
 		port,                       // Port
-		[]string{"version=1.0", "platform=desktop"}, // TXT records
+		[]string{"version=1.0", "platform=desktop", "token=" + token}, // TXT records
 		nil, // Use all network interfaces
 	)
 	if err != nil {

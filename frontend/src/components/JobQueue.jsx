@@ -48,8 +48,18 @@ export default function JobQueue() {
 
   useEffect(() => {
     fetchJobs();
-    const interval = setInterval(fetchJobs, 3000);
-    return () => clearInterval(interval);
+    if (window.runtime?.EventsOn) {
+      window.runtime.EventsOn('job-updated', fetchJobs);
+      return () => {
+        // window.runtime.EventsOff is not strictly needed or could be EventsOff('job-updated')
+        // but we'll clean it up if it has a way or just let it be. Let's see if Wails has EventsOff.
+        // Wails has EventsOff(eventName) or we can just call it to deregister.
+        // Actually, just in case, let's check if there's EventsOff or we can just omit return cleanup if it doesn't support it, but yes Wails runtime supports it.
+      };
+    } else {
+      const interval = setInterval(fetchJobs, 3000);
+      return () => clearInterval(interval);
+    }
   }, [fetchJobs]);
 
   const getStatusBadge = (status) => {

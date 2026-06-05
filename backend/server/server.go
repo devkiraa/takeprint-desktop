@@ -21,12 +21,20 @@ type PrintJob struct {
 	ID          string `json:"id"`
 	Filename    string `json:"filename"`
 	Printer     string `json:"printer"`
-	Status      string `json:"status"` // "printing", "completed", "failed"
+	Status      string `json:"status"` // "printing", "completed", "failed", "saved"
 	SubmittedAt string `json:"submittedAt"`
 	Pages       string `json:"pages"`
 	Color       string `json:"color"`
 	Copies      int    `json:"copies"`
 	Error       string `json:"error,omitempty"`
+}
+
+type pendingJob struct {
+	jobID       string
+	printerName string
+	filePath    string
+	filename    string
+	opts        printer.PrintOptions
 }
 
 // Server wraps the HTTP server for receiving print jobs.
@@ -36,14 +44,20 @@ type Server struct {
 	Logger         func(msg string)
 	jobs           []PrintJob
 	jobsMu         sync.RWMutex
+	authToken      string
+	printQueue     chan pendingJob
+	onJobUpdate    func()
 }
 
 // New creates and configures the HTTP print server.
-func New(addr string, ps *printer.Service, logger func(string)) *Server {
+func New(addr string, authToken string, ps *printer.Service, logger func(string), onJobUpdate func()) *Server {
 	s := &Server{
 		printerService: ps,
 		Logger:         logger,
 		jobs:           make([]PrintJob, 0),
+		authToken:      authToken,
+		printQueue:     make(chan pendingJob, 100),
+		onJobUpdate:    onJobUpdate,
 	}
 	if s.Logger == nil {
 		s.Logger = func(msg string) { fmt.Println(msg) }
@@ -58,10 +72,13 @@ func New(addr string, ps *printer.Service, logger func(string)) *Server {
 	s.httpServer = &http.Server{
 		Addr:         addr,
 		Handler:      corsMiddleware(mux),
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 30 * time.Second,
-		IdleTimeout:  60 * time.Second,
+		ReadTimeout:  60 * time.Second,  // Extended for slow file uploads
+		WriteTimeout: 60 * time.Second,
+		IdleTimeout:  120 * time.Second,
 	}
+
+	go s.startQueueWorker()
+
 	return s
 }
 
@@ -85,27 +102,59 @@ func (s *Server) Stop() {
 	}
 }
 
+// --- Token Verification ---
+func (s *Server) verifyToken(w http.ResponseWriter, r *http.Request) bool {
+	if s.authToken == "" {
+		return true
+	}
+	authHeader := r.Header.Get("Authorization")
+	var token string
+	if strings.HasPrefix(authHeader, "Bearer ") {
+		token = strings.TrimPrefix(authHeader, "Bearer ")
+	} else {
+		token = r.Header.Get("X-TakePrint-Token")
+		if token == "" {
+			token = r.URL.Query().Get("token")
+		}
+	}
+
+	if token != s.authToken {
+		s.Logger(fmt.Sprintf("🔒 Rejected unauthorized access from %s", r.RemoteAddr))
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return false
+	}
+	return true
+}
+
 // --- Job Queue Management ---
 
 func (s *Server) addJob(job PrintJob) {
 	s.jobsMu.Lock()
-	defer s.jobsMu.Unlock()
 	// Insert at the beginning of the slice (newest first)
 	s.jobs = append([]PrintJob{job}, s.jobs...)
 	if len(s.jobs) > 20 {
 		s.jobs = s.jobs[:20]
 	}
+	s.jobsMu.Unlock()
+	if s.onJobUpdate != nil {
+		s.onJobUpdate()
+	}
 }
 
 func (s *Server) updateJobStatus(id string, status string, errStr string) {
 	s.jobsMu.Lock()
-	defer s.jobsMu.Unlock()
+	updated := false
 	for i, job := range s.jobs {
 		if job.ID == id {
 			s.jobs[i].Status = status
 			s.jobs[i].Error = errStr
+			updated = true
 			break
 		}
+	}
+	s.jobsMu.Unlock()
+	if updated && s.onJobUpdate != nil {
+		s.onJobUpdate()
 	}
 }
 
@@ -116,6 +165,50 @@ func (s *Server) GetJobs() []PrintJob {
 	cpy := make([]PrintJob, len(s.jobs))
 	copy(cpy, s.jobs)
 	return cpy
+}
+
+// --- Sequential Print Queue Worker ---
+
+func (s *Server) startQueueWorker() {
+	for job := range s.printQueue {
+		s.processPrintJob(job)
+	}
+}
+
+func (s *Server) processPrintJob(job pendingJob) {
+	defer os.Remove(job.filePath)
+
+	if printer.IsVirtualPrinter(job.printerName) {
+		saveDir := s.printerService.GetVirtualPrinterDir()
+		if saveDir == "" {
+			home, _ := os.UserHomeDir()
+			saveDir = filepath.Join(home, "Downloads")
+		}
+		destPath := filepath.Join(saveDir, job.filename)
+		destPath = getUniquePath(destPath)
+
+		if err := copyFile(job.filePath, destPath); err != nil {
+			s.Logger(fmt.Sprintf("❌ Failed to save virtual print to '%s': %v", destPath, err))
+			s.updateJobStatus(job.jobID, "failed", err.Error())
+		} else {
+			s.Logger(fmt.Sprintf("💾 Saved virtual print successfully to '%s'", destPath))
+			s.updateJobStatus(job.jobID, "saved", "")
+		}
+		return
+	}
+
+	if err := s.printerService.PrintPDF(job.printerName, job.filePath, job.opts); err != nil {
+		s.Logger(fmt.Sprintf("❌ Print failed for '%s': %v", job.filename, err))
+		s.updateJobStatus(job.jobID, "failed", err.Error())
+	} else {
+		s.Logger(fmt.Sprintf("✅ Printed '%s' on '%s' (Pages: %s, Color: %s, Copies: %d)",
+			job.filename, job.printerName, job.opts.Pages, job.opts.Color, job.opts.Copies))
+		s.updateJobStatus(job.jobID, "completed", "")
+
+		// Decrement printer supplies on successful print.
+		pagesCount := estimatePages(job.opts.Pages) * job.opts.Copies
+		s.printerService.DecrementSupplies(job.printerName, pagesCount, job.opts.Color)
+	}
 }
 
 // --- Handlers ---
@@ -130,6 +223,9 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleJobs(w http.ResponseWriter, r *http.Request) {
+	if !s.verifyToken(w, r) {
+		return
+	}
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -139,6 +235,9 @@ func (s *Server) handleJobs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handlePrinters(w http.ResponseWriter, r *http.Request) {
+	if !s.verifyToken(w, r) {
+		return
+	}
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -157,46 +256,120 @@ func (s *Server) handlePrinters(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handlePrint(w http.ResponseWriter, r *http.Request) {
+	if !s.verifyToken(w, r) {
+		return
+	}
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	// Limit upload size to 50 MB.
+	// Limit total request size to 50 MB
 	r.Body = http.MaxBytesReader(w, r.Body, 50<<20)
 
-	if err := r.ParseMultipartForm(50 << 20); err != nil {
-		http.Error(w, "Failed to parse form data", http.StatusBadRequest)
+	mr, err := r.MultipartReader()
+	if err != nil {
+		http.Error(w, "Expected multipart/form-data", http.StatusBadRequest)
 		return
 	}
 
-	printerName := r.FormValue("printer")
+	var printerName string
+	var pages string = "all"
+	var color string = "color"
+	var copies int = 1
+	var tmpPath string
+	var headerFilename string
+
+	for {
+		part, err := mr.NextPart()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			if tmpPath != "" {
+				os.Remove(tmpPath)
+			}
+			http.Error(w, "Error parsing form data", http.StatusBadRequest)
+			return
+		}
+
+		formName := part.FormName()
+		if formName == "file" {
+			headerFilename = filepath.Base(part.FileName())
+			if filepath.Ext(headerFilename) != ".pdf" {
+				part.Close()
+				if tmpPath != "" {
+					os.Remove(tmpPath)
+				}
+				http.Error(w, "Only PDF files are supported", http.StatusBadRequest)
+				return
+			}
+
+			// Create temporary file on disk to stream upload directly
+			tmpFile, err := os.CreateTemp("", "takeprint-*.pdf")
+			if err != nil {
+				part.Close()
+				s.Logger(fmt.Sprintf("❌ Failed to create temp file: %v", err))
+				http.Error(w, "Server error", http.StatusInternalServerError)
+				return
+			}
+			tmpPath = tmpFile.Name()
+
+			_, err = io.Copy(tmpFile, part)
+			tmpFile.Close()
+			part.Close()
+			if err != nil {
+				os.Remove(tmpPath)
+				s.Logger(fmt.Sprintf("❌ Failed to save uploaded file: %v", err))
+				http.Error(w, "Failed to save file", http.StatusInternalServerError)
+				return
+			}
+		} else {
+			fieldBytes, err := io.ReadAll(part)
+			part.Close()
+			if err != nil {
+				if tmpPath != "" {
+					os.Remove(tmpPath)
+				}
+				http.Error(w, "Error reading form field", http.StatusBadRequest)
+				return
+			}
+			val := string(fieldBytes)
+
+			switch formName {
+			case "printer":
+				printerName = val
+			case "pages":
+				pages = val
+			case "color":
+				color = val
+			case "copies":
+				if valInt, err := strconv.Atoi(val); err == nil && valInt > 0 {
+					copies = valInt
+				}
+			}
+		}
+	}
+
 	if printerName == "" {
+		if tmpPath != "" {
+			os.Remove(tmpPath)
+		}
 		http.Error(w, "Missing 'printer' field", http.StatusBadRequest)
+		return
+	}
+
+	if tmpPath == "" {
+		http.Error(w, "Missing 'file' field", http.StatusBadRequest)
 		return
 	}
 
 	// Verify the printer is actually shared.
 	if !s.printerService.IsPrinterShared(printerName) {
+		os.Remove(tmpPath)
 		s.Logger(fmt.Sprintf("⚠️ Blocked print job targeting unshared printer: %s", printerName))
 		http.Error(w, "Target printer is not shared", http.StatusForbidden)
 		return
-	}
-
-	// Parse print settings.
-	pages := r.FormValue("pages")
-	if pages == "" {
-		pages = "all"
-	}
-	color := r.FormValue("color")
-	if color == "" {
-		color = "color"
-	}
-	copies := 1
-	if copiesStr := r.FormValue("copies"); copiesStr != "" {
-		if val, err := strconv.Atoi(copiesStr); err == nil && val > 0 {
-			copies = val
-		}
 	}
 
 	opts := printer.PrintOptions{
@@ -205,46 +378,14 @@ func (s *Server) handlePrint(w http.ResponseWriter, r *http.Request) {
 		Copies: copies,
 	}
 
-	file, header, err := r.FormFile("file")
-	if err != nil {
-		http.Error(w, "Missing 'file' field", http.StatusBadRequest)
-		return
-	}
-	defer file.Close()
-
-	// Validate file extension.
-	ext := filepath.Ext(header.Filename)
-	if ext != ".pdf" {
-		http.Error(w, "Only PDF files are supported", http.StatusBadRequest)
-		return
-	}
-
-	s.Logger(fmt.Sprintf("📥 Received print job: %s → %s (Pages: %s, Color: %s, Copies: %d, Size: %d bytes)",
-		header.Filename, printerName, opts.Pages, opts.Color, opts.Copies, header.Size))
-
-	// Save to temporary file.
-	tmpFile, err := os.CreateTemp("", "takeprint-*.pdf")
-	if err != nil {
-		s.Logger(fmt.Sprintf("❌ Failed to create temp file: %v", err))
-		http.Error(w, "Server error", http.StatusInternalServerError)
-		return
-	}
-	tmpPath := tmpFile.Name()
-
-	if _, err := io.Copy(tmpFile, file); err != nil {
-		tmpFile.Close()
-		os.Remove(tmpPath)
-		s.Logger(fmt.Sprintf("❌ Failed to save uploaded file: %v", err))
-		http.Error(w, "Failed to save file", http.StatusInternalServerError)
-		return
-	}
-	tmpFile.Close()
+	s.Logger(fmt.Sprintf("📥 Received print job: %s → %s (Pages: %s, Color: %s, Copies: %d)",
+		headerFilename, printerName, opts.Pages, opts.Color, opts.Copies))
 
 	// Track job
 	jobID := fmt.Sprintf("job-%d", time.Now().UnixNano())
 	job := PrintJob{
 		ID:          jobID,
-		Filename:    header.Filename,
+		Filename:    headerFilename,
 		Printer:     printerName,
 		Status:      "printing",
 		SubmittedAt: time.Now().Format("15:04:05"),
@@ -254,48 +395,20 @@ func (s *Server) handlePrint(w http.ResponseWriter, r *http.Request) {
 	}
 	s.addJob(job)
 
-	// Execute the print job.
-	go func() {
-		defer os.Remove(tmpPath)
-
-		if printer.IsVirtualPrinter(printerName) {
-			saveDir := s.printerService.GetVirtualPrinterDir()
-			if saveDir == "" {
-				home, _ := os.UserHomeDir()
-				saveDir = filepath.Join(home, "Downloads")
-			}
-			destPath := filepath.Join(saveDir, header.Filename)
-			destPath = getUniquePath(destPath)
-
-			if err := copyFile(tmpPath, destPath); err != nil {
-				s.Logger(fmt.Sprintf("❌ Failed to save virtual print to '%s': %v", destPath, err))
-				s.updateJobStatus(jobID, "failed", err.Error())
-			} else {
-				s.Logger(fmt.Sprintf("💾 Saved virtual print successfully to '%s'", destPath))
-				s.updateJobStatus(jobID, "saved", "")
-			}
-			return
-		}
-
-		if err := s.printerService.PrintPDF(printerName, tmpPath, opts); err != nil {
-			s.Logger(fmt.Sprintf("❌ Print failed for '%s': %v", header.Filename, err))
-			s.updateJobStatus(jobID, "failed", err.Error())
-		} else {
-			s.Logger(fmt.Sprintf("✅ Printed '%s' on '%s' (Pages: %s, Color: %s, Copies: %d)",
-				header.Filename, printerName, opts.Pages, opts.Color, opts.Copies))
-			s.updateJobStatus(jobID, "completed", "")
-
-			// Decrement printer supplies on successful print.
-			pagesCount := estimatePages(opts.Pages) * opts.Copies
-			s.printerService.DecrementSupplies(printerName, pagesCount, opts.Color)
-		}
-	}()
+	// Queue the print job for sequential execution
+	s.printQueue <- pendingJob{
+		jobID:       jobID,
+		printerName: printerName,
+		filePath:    tmpPath,
+		filename:    headerFilename,
+		opts:        opts,
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
 	json.NewEncoder(w).Encode(map[string]string{
 		"status":  "accepted",
-		"message": fmt.Sprintf("Print job '%s' queued for printer '%s'", header.Filename, printerName),
+		"message": fmt.Sprintf("Print job '%s' queued for printer '%s'", headerFilename, printerName),
 	})
 }
 

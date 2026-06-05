@@ -209,7 +209,7 @@ function ScanModal({ onClose, onDeviceAdded, connectedDeviceNames }) {
     setConnecting(device.name);
     try {
       if (window.go?.main?.App?.AddRemoteDevice) {
-        await window.go.main.App.AddRemoteDevice(device.name, device.ips, device.port);
+        await window.go.main.App.AddRemoteDevice(device.name, device.ips, device.port, device.token || "");
       }
       onDeviceAdded();
       setDiscovered(prev => prev.filter(d => d.name !== device.name));
@@ -227,7 +227,7 @@ function ScanModal({ onClose, onDeviceAdded, connectedDeviceNames }) {
     try {
       const port = 8080;
       if (window.go?.main?.App?.AddRemoteDevice) {
-        await window.go.main.App.AddRemoteDevice(manualName.trim(), [manualIP.trim()], port);
+        await window.go.main.App.AddRemoteDevice(manualName.trim(), [manualIP.trim()], port, "");
       }
       onDeviceAdded();
       setManualIP('');

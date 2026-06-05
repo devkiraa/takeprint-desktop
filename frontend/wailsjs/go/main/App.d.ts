@@ -6,9 +6,11 @@ import {main} from '../models';
 import {printer} from '../models';
 import {mdns} from '../models';
 
-export function AddRemoteDevice(arg1:string,arg2:Array<string>,arg3:number):Promise<void>;
+export function AddRemoteDevice(arg1:string,arg2:Array<string>,arg3:number,arg4:string):Promise<void>;
 
 export function GetAllRemotePrinters():Promise<Array<remote.RemotePrinter>>;
+
+export function GetAuthToken():Promise<string>;
 
 export function GetConnectedDevices():Promise<Array<remote.ConnectedDevice>>;
 

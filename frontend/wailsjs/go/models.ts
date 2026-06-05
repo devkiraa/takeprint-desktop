@@ -43,6 +43,7 @@ export namespace mdns {
 	    name: string;
 	    ips: string[];
 	    port: number;
+	    token: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new DiscoveredDevice(source);
@@ -53,6 +54,7 @@ export namespace mdns {
 	        this.name = source["name"];
 	        this.ips = source["ips"];
 	        this.port = source["port"];
+	        this.token = source["token"];
 	    }
 	}
 
@@ -125,6 +127,7 @@ export namespace remote {
 	    port: number;
 	    status: string;
 	    activeIP: string;
+	    token: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new ConnectedDevice(source);
@@ -137,6 +140,7 @@ export namespace remote {
 	        this.port = source["port"];
 	        this.status = source["status"];
 	        this.activeIP = source["activeIP"];
+	        this.token = source["token"];
 	    }
 	}
 	export class RemotePrinter {

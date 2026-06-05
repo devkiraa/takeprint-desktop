@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"crypto/rand"
+	"encoding/hex"
 	"net"
 	"os"
 	"os/exec"
@@ -43,6 +45,7 @@ type Settings struct {
 	PrinterSupplies   map[string][]printer.SupplyInfo `json:"printerSupplies"`
 	VirtualPrinterDir string                          `json:"virtualPrinterDir"`
 	ConnectedDevices  []remote.DeviceConfig           `json:"connectedDevices,omitempty"`
+	AuthToken         string                          `json:"authToken"`
 }
 
 func getDefaultDownloadsDir() string {
@@ -53,6 +56,14 @@ func getDefaultDownloadsDir() string {
 	return filepath.Join(home, "Downloads")
 }
 
+func generateSecureToken() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "takeprint_fallback_token_12345"
+	}
+	return hex.EncodeToString(b)
+}
+
 func (a *App) loadSettings() Settings {
 	file, err := os.Open("settings.json")
 	if err != nil {
@@ -61,12 +72,15 @@ func (a *App) loadSettings() Settings {
 		if err != nil || hostname == "" {
 			hostname = "TakePrint"
 		}
-		return Settings{
+		s := Settings{
 			ServerName:        hostname,
 			AutoLaunchEnabled: false,
 			PrinterSupplies:   make(map[string][]printer.SupplyInfo),
 			VirtualPrinterDir: getDefaultDownloadsDir(),
+			AuthToken:         generateSecureToken(),
 		}
+		_ = a.saveSettings(s)
+		return s
 	}
 	defer file.Close()
 
@@ -76,18 +90,25 @@ func (a *App) loadSettings() Settings {
 		if hostname == "" {
 			hostname = "TakePrint"
 		}
-		return Settings{
+		s = Settings{
 			ServerName:        hostname,
 			AutoLaunchEnabled: false,
 			PrinterSupplies:   make(map[string][]printer.SupplyInfo),
 			VirtualPrinterDir: getDefaultDownloadsDir(),
+			AuthToken:         generateSecureToken(),
 		}
+		_ = a.saveSettings(s)
+		return s
 	}
 	if s.PrinterSupplies == nil {
 		s.PrinterSupplies = make(map[string][]printer.SupplyInfo)
 	}
 	if s.VirtualPrinterDir == "" {
 		s.VirtualPrinterDir = getDefaultDownloadsDir()
+	}
+	if s.AuthToken == "" {
+		s.AuthToken = generateSecureToken()
+		_ = a.saveSettings(s)
 	}
 	return s
 }
@@ -142,7 +163,7 @@ func (a *App) startup(ctx context.Context) {
 	a.printerService.SetVirtualPrinterDir(settings.VirtualPrinterDir)
 
 	// Start mDNS service with the custom server name.
-	mdnsSrv, err := mdns.Start(settings.ServerName, 8080, a.logCallback)
+	mdnsSrv, err := mdns.Start(settings.ServerName, 8080, settings.AuthToken, a.logCallback)
 	if err != nil {
 		a.addLog("error", fmt.Sprintf("Failed to start mDNS: %v", err))
 	} else {
@@ -151,7 +172,11 @@ func (a *App) startup(ctx context.Context) {
 	}
 
 	// Start HTTP server in a goroutine.
-	a.httpServer = server.New(":8080", a.printerService, a.logCallback)
+	a.httpServer = server.New(":8080", settings.AuthToken, a.printerService, a.logCallback, func() {
+		if a.ctx != nil {
+			wailsRuntime.EventsEmit(a.ctx, "job-updated")
+		}
+	})
 	go func() {
 		if err := a.httpServer.Start(); err != nil {
 			a.addLog("error", fmt.Sprintf("HTTP server error: %v", err))
@@ -218,6 +243,11 @@ func (a *App) GetServerName() string {
 	return a.loadSettings().ServerName
 }
 
+// GetAuthToken returns the current server authentication token.
+func (a *App) GetAuthToken() string {
+	return a.loadSettings().AuthToken
+}
+
 // UpdateServerName updates the customized server name and restarts the mDNS server.
 func (a *App) UpdateServerName(newName string) error {
 	if newName == "" {
@@ -239,7 +269,7 @@ func (a *App) UpdateServerName(newName string) error {
 	}
 
 	// Start new mDNS with updated name
-	mdnsSrv, err := mdns.Start(newName, 8080, a.logCallback)
+	mdnsSrv, err := mdns.Start(newName, 8080, s.AuthToken, a.logCallback)
 	if err != nil {
 		a.addLog("error", fmt.Sprintf("Failed to restart mDNS: %v", err))
 		return err
@@ -421,11 +451,11 @@ func (a *App) ScanForDevices() ([]mdns.DiscoveredDevice, error) {
 }
 
 // AddRemoteDevice adds a remote TakePrint server to the connected list.
-func (a *App) AddRemoteDevice(name string, ips []string, port int) error {
+func (a *App) AddRemoteDevice(name string, ips []string, port int, token string) error {
 	if name == "" || len(ips) == 0 {
 		return fmt.Errorf("name and at least one IP are required")
 	}
-	a.remoteManager.AddDevice(name, ips, port)
+	a.remoteManager.AddDevice(name, ips, port, token)
 
 	// Persist to settings.
 	s := a.loadSettings()

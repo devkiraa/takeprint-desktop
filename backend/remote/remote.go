@@ -16,9 +16,10 @@ import (
 
 // DeviceConfig is the persistable configuration for a connected remote device.
 type DeviceConfig struct {
-	Name string   `json:"name"`
-	IPs  []string `json:"ips"`
-	Port int      `json:"port"`
+	Name  string   `json:"name"`
+	IPs   []string `json:"ips"`
+	Port  int      `json:"port"`
+	Token string   `json:"token"`
 }
 
 // ConnectedDevice is the runtime representation of a remote TakePrint server
@@ -29,6 +30,7 @@ type ConnectedDevice struct {
 	Port     int      `json:"port"`
 	Status   string   `json:"status"` // "online", "offline", "checking"
 	ActiveIP string   `json:"activeIP"`
+	Token    string   `json:"token"`
 }
 
 // RemotePrinter represents a printer on a remote TakePrint server.
@@ -83,6 +85,7 @@ func (m *Manager) LoadDevices(configs []DeviceConfig) {
 			IPs:    cfg.IPs,
 			Port:   cfg.Port,
 			Status: "checking",
+			Token:  cfg.Token,
 		}
 	}
 }
@@ -112,7 +115,7 @@ func (m *Manager) Stop() {
 }
 
 // AddDevice adds a new remote device and starts monitoring it.
-func (m *Manager) AddDevice(name string, ips []string, port int) {
+func (m *Manager) AddDevice(name string, ips []string, port int, token string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -121,6 +124,7 @@ func (m *Manager) AddDevice(name string, ips []string, port int) {
 		IPs:    ips,
 		Port:   port,
 		Status: "checking",
+		Token:  token,
 	}
 	m.devices[name] = device
 	m.logger(fmt.Sprintf("➕ Added remote device: %s (%s:%d)", name, strings.Join(ips, ", "), port))
@@ -155,9 +159,10 @@ func (m *Manager) GetDeviceConfigs() []DeviceConfig {
 	configs := make([]DeviceConfig, 0, len(m.devices))
 	for _, d := range m.devices {
 		configs = append(configs, DeviceConfig{
-			Name: d.Name,
-			IPs:  d.IPs,
-			Port: d.Port,
+			Name:  d.Name,
+			IPs:   d.IPs,
+			Port:  d.Port,
+			Token: d.Token,
 		})
 	}
 	return configs
@@ -177,7 +182,15 @@ func (m *Manager) FetchRemotePrinters(deviceName string) ([]RemotePrinter, error
 		return nil, fmt.Errorf("device '%s' is offline", deviceName)
 	}
 
-	resp, err := m.httpClient.Get(baseURL + "/printers")
+	req, err := http.NewRequest("GET", baseURL+"/printers", nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	if device.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+device.Token)
+	}
+
+	resp, err := m.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch printers from '%s': %w", deviceName, err)
 	}
@@ -279,6 +292,9 @@ func (m *Manager) ForwardPrintJob(deviceName, printerName, filePath string, opts
 		return fmt.Errorf("failed to create request: %w", err)
 	}
 	req.Header.Set("Content-Type", writer.FormDataContentType())
+	if device.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+device.Token)
+	}
 
 	resp, err := uploadClient.Do(req)
 	if err != nil {

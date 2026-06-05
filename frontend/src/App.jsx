@@ -318,6 +318,7 @@ export default function App() {
 
 function QRModal({ onClose, serverName }) {
   const [ips, setIps] = useState([]);
+  const [token, setToken] = useState('');
   const canvasRef = useRef(null);
 
   useEffect(() => {
@@ -333,7 +334,20 @@ function QRModal({ onClose, serverName }) {
         setIps(["192.168.1.100"]); // Fallback for dev mode
       }
     };
+    const fetchToken = async () => {
+      if (window.go?.main?.App?.GetAuthToken) {
+        try {
+          const t = await window.go.main.App.GetAuthToken();
+          setToken(t);
+        } catch (err) {
+          console.error("Failed to get auth token", err);
+        }
+      } else {
+        setToken("mock_token_12345");
+      }
+    };
     fetchIPs();
+    fetchToken();
   }, []);
 
   useEffect(() => {
@@ -341,7 +355,8 @@ function QRModal({ onClose, serverName }) {
       const qrData = JSON.stringify({
         name: serverName,
         ips: ips,
-        port: 8080
+        port: 8080,
+        token: token
       });
       QRCode.toCanvas(canvasRef.current, qrData, {
         width: 180,
@@ -354,7 +369,7 @@ function QRModal({ onClose, serverName }) {
         if (error) console.error(error);
       });
     }
-  }, [ips, serverName]);
+  }, [ips, serverName, token]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-fade-in">

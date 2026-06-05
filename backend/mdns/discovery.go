@@ -12,9 +12,10 @@ import (
 
 // DiscoveredDevice represents a TakePrint server found on the network.
 type DiscoveredDevice struct {
-	Name string   `json:"name"`
-	IPs  []string `json:"ips"`
-	Port int      `json:"port"`
+	Name  string   `json:"name"`
+	IPs   []string `json:"ips"`
+	Port  int      `json:"port"`
+	Token string   `json:"token"`
 }
 
 // ScanForDevices browses the local network for other TakePrint instances
@@ -63,13 +64,21 @@ func ScanForDevices(selfName string, timeout time.Duration, logger func(string))
 				continue
 			}
 
+			var token string
+			for _, txt := range entry.Text {
+				if strings.HasPrefix(txt, "token=") {
+					token = strings.TrimPrefix(txt, "token=")
+				}
+			}
+
 			device := DiscoveredDevice{
-				Name: entry.Instance,
-				IPs:  ips,
-				Port: entry.Port,
+				Name:  entry.Instance,
+				IPs:   ips,
+				Port:  entry.Port,
+				Token: token,
 			}
 			devices = append(devices, device)
-			logger(fmt.Sprintf("📡 Found device: %s at %s:%d", device.Name, strings.Join(ips, ", "), device.Port))
+			logger(fmt.Sprintf("📡 Found device: %s at %s:%d (Auth Enabled: %v)", device.Name, strings.Join(ips, ", "), device.Port, token != ""))
 		}
 	}()
 
