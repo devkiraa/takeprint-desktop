@@ -49,17 +49,20 @@ jobs:
       - name: Build Desktop Application
         run: |
           $env:PATH += ";$HOME/go/bin"
-          wails build -platform windows/amd64
+          wails build -platform windows/amd64 -nsis
 
-      - name: Rename Executable for Release
+      - name: Rename Executable and Installer for Release
         run: |
           mv build/bin/takeprint.exe build/bin/TakePrint-Desktop.exe
+          mv build/bin/takeprint-installer.exe build/bin/TakePrint-Desktop-Installer.exe
 
-      - name: Create GitHub Release and Upload Artifact
+      - name: Create GitHub Release and Upload Artifacts
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.version }}
           name: Release ${{ steps.tag.outputs.version }}
-          files: build/bin/TakePrint-Desktop.exe
+          files: |
+            build/bin/TakePrint-Desktop.exe
+            build/bin/TakePrint-Desktop-Installer.exe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
