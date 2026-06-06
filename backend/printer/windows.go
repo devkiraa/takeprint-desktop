@@ -7,8 +7,11 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
+	"time"
 )
 
 // psPrinter is the JSON shape returned by PowerShell's Get-Printer.
@@ -18,18 +21,21 @@ type psPrinter struct {
 	Type          int    `json:"Type"`
 }
 
-// statusMap translates the PrinterStatus integer codes from WMI.
+// statusMap translates the PrinterStatus integer codes from Get-Printer / CIM_Printer.
 var statusMap = map[int]string{
 	0: "Normal",
-	1: "Paused",
-	2: "Error",
-	3: "Pending Deletion",
-	4: "Paper Jam",
-	5: "Paper Out",
-	6: "Manual Feed",
-	7: "Paper Problem",
-	8: "Offline",
+	1: "Unknown",
+	2: "Idle",
+	3: "Printing",
+	4: "Warming Up",
+	5: "Stopped",
+	6: "Offline",
+	7: "Paused",
 }
+
+// sumatraOnce ensures we only try to install SumatraPDF once per session.
+var sumatraOnce sync.Once
+var sumatraInstallErr error
 
 // ListPrinters enumerates installed printers via PowerShell's Get-Printer.
 func (s *Service) ListPrinters() ([]PrinterInfo, error) {
@@ -98,98 +104,200 @@ func (s *Service) ListPrinters() ([]PrinterInfo, error) {
 	return printers, nil
 }
 
-// PrintPDF sends a PDF file to the specified printer using SumatraPDF, Microsoft Edge, or Google Chrome.
+// PrintPDF sends a PDF file to the specified printer.
+// It tries multiple methods in order of reliability:
+// 1. SumatraPDF (best — silent, supports all print settings)
+// 2. Adobe Reader (good — widely installed)
+// 3. Foxit Reader (good — popular alternative)
+// 4. Auto-install SumatraPDF via winget and retry
+// 5. Default-printer-swap with system PDF handler (guaranteed fallback)
 func (s *Service) PrintPDF(printerName, filePath string, opts PrintOptions) error {
-	// Try SumatraPDF first (preferred for reliable silent printing).
+	// 1. Try SumatraPDF (preferred for reliable silent printing).
+	if err := s.printViaSumatraPDF(printerName, filePath, opts); err == nil {
+		return nil
+	}
+
+	// 2. Try Adobe Reader / Acrobat.
+	if adobePath, err := findAdobeReader(); err == nil {
+		if err := printViaAdobe(adobePath, printerName, filePath); err == nil {
+			return nil
+		}
+	}
+
+	// 3. Try Foxit Reader.
+	if foxitPath, err := findFoxitReader(); err == nil {
+		if err := printViaFoxit(foxitPath, printerName, filePath); err == nil {
+			return nil
+		}
+	}
+
+	// 4. Auto-install SumatraPDF via winget and retry.
+	sumatraOnce.Do(func() {
+		sumatraInstallErr = installSumatraPDF()
+	})
+	if sumatraInstallErr == nil {
+		if err := s.printViaSumatraPDF(printerName, filePath, opts); err == nil {
+			return nil
+		}
+	}
+
+	// 5. Guaranteed fallback: temporarily set target as default printer,
+	// print with -Verb Print, then restore the original default.
+	return printViaDefaultSwap(printerName, filePath)
+}
+
+// --- Method 1: SumatraPDF ---
+
+func (s *Service) printViaSumatraPDF(printerName, filePath string, opts PrintOptions) error {
 	sumatraPath, err := findSumatraPDF()
-	if err == nil {
-		args := []string{
-			"-print-to", printerName,
-			"-silent",
-		}
-
-		// Build SumatraPDF print settings: e.g. "1x,pages=1-5,mono,portrait,paper=A4,simplex"
-		var settings []string
-		if opts.Copies > 0 {
-			settings = append(settings, fmt.Sprintf("%dx", opts.Copies))
-		}
-		if opts.Pages != "" && opts.Pages != "all" {
-			settings = append(settings, fmt.Sprintf("pages=%s", opts.Pages))
-		}
-		if opts.Color == "mono" || opts.Color == "monochrome" {
-			settings = append(settings, "mono")
-		} else if opts.Color == "color" {
-			settings = append(settings, "color")
-		}
-		if opts.Orientation == "landscape" {
-			settings = append(settings, "landscape")
-		} else if opts.Orientation == "portrait" {
-			settings = append(settings, "portrait")
-		}
-		if opts.PaperSize != "" && opts.PaperSize != "default" {
-			settings = append(settings, fmt.Sprintf("paper=%s", opts.PaperSize))
-		}
-		if opts.Duplex == "duplexlong" || opts.Duplex == "duplexshort" || opts.Duplex == "simplex" {
-			settings = append(settings, opts.Duplex)
-		}
-
-		if len(settings) > 0 {
-			args = append(args, "-print-settings", strings.Join(settings, ","))
-		}
-
-		args = append(args, filePath)
-		cmd := exec.Command(sumatraPath, args...)
-		cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
-		if output, err := cmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("SumatraPDF print failed: %w — %s", err, string(output))
-		}
-		return nil
+	if err != nil {
+		return err
 	}
 
-	// Try Microsoft Edge next (usually installed on all Windows machines).
-	edgePath, err := findEdge()
-	if err == nil {
-		cmd := exec.Command(edgePath,
-			"--headless",
-			"--disable-gpu",
-			fmt.Sprintf("--print-to-destination=%s", printerName),
-			filePath,
-		)
-		cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
-		if output, err := cmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("Microsoft Edge print failed: %w — %s", err, string(output))
-		}
-		return nil
+	args := []string{
+		"-print-to", printerName,
+		"-silent",
 	}
 
-	// Try Google Chrome next.
-	chromePath, err := findChrome()
-	if err == nil {
-		cmd := exec.Command(chromePath,
-			"--headless",
-			"--disable-gpu",
-			fmt.Sprintf("--print-to-destination=%s", printerName),
-			filePath,
-		)
-		cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
-		if output, err := cmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("Google Chrome print failed: %w — %s", err, string(output))
-		}
-		return nil
+	// Build SumatraPDF print settings: e.g. "1x,pages=1-5,mono,portrait,paper=A4,simplex"
+	var settings []string
+	if opts.Copies > 0 {
+		settings = append(settings, fmt.Sprintf("%dx", opts.Copies))
+	}
+	if opts.Pages != "" && opts.Pages != "all" {
+		settings = append(settings, fmt.Sprintf("pages=%s", opts.Pages))
+	}
+	if opts.Color == "mono" || opts.Color == "monochrome" {
+		settings = append(settings, "mono")
+	} else if opts.Color == "color" {
+		settings = append(settings, "color")
+	}
+	if opts.Orientation == "landscape" {
+		settings = append(settings, "landscape")
+	} else if opts.Orientation == "portrait" {
+		settings = append(settings, "portrait")
+	}
+	if opts.PaperSize != "" && opts.PaperSize != "default" {
+		settings = append(settings, fmt.Sprintf("paper=%s", opts.PaperSize))
+	}
+	if opts.Duplex == "duplexlong" || opts.Duplex == "duplexshort" || opts.Duplex == "simplex" {
+		settings = append(settings, opts.Duplex)
 	}
 
-	// Fallback: Use PowerShell Start-Process with the system default PDF handler.
-	psCmd := fmt.Sprintf(
-		`Start-Process -FilePath "%s" -Verb PrintTo -ArgumentList "%s" -Wait`,
-		filePath, printerName,
-	)
-	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", psCmd)
+	if len(settings) > 0 {
+		args = append(args, "-print-settings", strings.Join(settings, ","))
+	}
+
+	args = append(args, filePath)
+	cmd := exec.Command(sumatraPath, args...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("PowerShell print failed: %w — %s", err, string(output))
+		return fmt.Errorf("SumatraPDF print failed: %w — %s", err, string(output))
 	}
 	return nil
 }
+
+// --- Method 2: Adobe Reader ---
+
+func printViaAdobe(adobePath, printerName, filePath string) error {
+	// Adobe Reader syntax: AcroRd32.exe /t "file.pdf" "PrinterName"
+	cmd := exec.Command(adobePath, "/t", filePath, printerName)
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("Adobe Reader start failed: %w", err)
+	}
+
+	// Adobe Reader doesn't exit cleanly after /t; wait with timeout then kill.
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			return fmt.Errorf("Adobe Reader print failed: %w", err)
+		}
+	case <-time.After(30 * time.Second):
+		_ = cmd.Process.Kill()
+		// Timeout is normal for Adobe Reader /t — the job was still sent.
+	}
+	return nil
+}
+
+// --- Method 3: Foxit Reader ---
+
+func printViaFoxit(foxitPath, printerName, filePath string) error {
+	// Foxit syntax: FoxitPDFReader.exe /t "file.pdf" "PrinterName"
+	cmd := exec.Command(foxitPath, "/t", filePath, printerName)
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("Foxit Reader start failed: %w", err)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			return fmt.Errorf("Foxit Reader print failed: %w", err)
+		}
+	case <-time.After(30 * time.Second):
+		_ = cmd.Process.Kill()
+	}
+	return nil
+}
+
+// --- Method 5: Default Printer Swap ---
+
+func printViaDefaultSwap(printerName, filePath string) error {
+	// 1. Get the current default printer
+	getDefaultPS := `(Get-CimInstance -ClassName Win32_Printer -Filter "Default=True").Name`
+	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", getDefaultPS)
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	out, _ := cmd.Output()
+	originalDefault := strings.TrimSpace(string(out))
+
+	// 2. Set the target printer as default
+	setDefaultPS := fmt.Sprintf(
+		`(Get-WmiObject -Query "SELECT * FROM Win32_Printer WHERE Name='%s'").SetDefaultPrinter()`,
+		strings.ReplaceAll(printerName, "'", "''"),
+	)
+	cmd = exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", setDefaultPS)
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to set default printer to '%s': %w", printerName, err)
+	}
+
+	// 3. Print the file using -Verb Print (sends to default printer).
+	// The -Verb Print is more widely supported than -Verb PrintTo.
+	printPS := fmt.Sprintf(
+		`Start-Process -FilePath '%s' -Verb Print -WindowStyle Hidden -Wait -PassThru`,
+		strings.ReplaceAll(filePath, "'", "''"),
+	)
+	cmd = exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", printPS)
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	printOutput, printErr := cmd.CombinedOutput()
+
+	// 4. Restore the original default printer (always, even on error)
+	if originalDefault != "" && !strings.EqualFold(originalDefault, printerName) {
+		restorePS := fmt.Sprintf(
+			`(Get-WmiObject -Query "SELECT * FROM Win32_Printer WHERE Name='%s'").SetDefaultPrinter()`,
+			strings.ReplaceAll(originalDefault, "'", "''"),
+		)
+		restoreCmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", restorePS)
+		restoreCmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+		_ = restoreCmd.Run()
+	}
+
+	if printErr != nil {
+		return fmt.Errorf("print via default-swap failed: %w — %s", printErr, string(printOutput))
+	}
+	return nil
+}
+
+// --- Tool Finders ---
 
 // findSumatraPDF attempts to locate SumatraPDF on the system.
 func findSumatraPDF() (string, error) {
@@ -198,45 +306,78 @@ func findSumatraPDF() (string, error) {
 		return path, nil
 	}
 
-	// Check common installation directories.
+	// Build list of common installation directories.
 	commonPaths := []string{
 		`C:\Program Files\SumatraPDF\SumatraPDF.exe`,
 		`C:\Program Files (x86)\SumatraPDF\SumatraPDF.exe`,
 	}
+
+	// Also check %LOCALAPPDATA% (winget install location) and %APPDATA%/TakePrint
+	if localAppData := os.Getenv("LOCALAPPDATA"); localAppData != "" {
+		commonPaths = append(commonPaths,
+			filepath.Join(localAppData, "SumatraPDF", "SumatraPDF.exe"),
+		)
+	}
+	if appData := os.Getenv("APPDATA"); appData != "" {
+		commonPaths = append(commonPaths,
+			filepath.Join(appData, "TakePrint", "tools", "SumatraPDF.exe"),
+		)
+	}
+
 	for _, p := range commonPaths {
-		if _, err := exec.LookPath(p); err == nil {
-			return p, nil
-		}
-		// LookPath might not work for absolute paths; try Command directly.
-		cmd := exec.Command(p, "-h")
-		cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
-		if err := cmd.Start(); err == nil {
-			_ = cmd.Process.Kill()
+		if _, err := os.Stat(p); err == nil {
 			return p, nil
 		}
 	}
 	return "", fmt.Errorf("SumatraPDF not found")
 }
 
-// findEdge attempts to locate Microsoft Edge on the system.
-func findEdge() (string, error) {
-	path := `C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe`
-	if _, err := os.Stat(path); err == nil {
-		return path, nil
-	}
-	return "", fmt.Errorf("Edge not found")
-}
-
-// findChrome attempts to locate Google Chrome on the system.
-func findChrome() (string, error) {
+// findAdobeReader attempts to locate Adobe Reader or Adobe Acrobat.
+func findAdobeReader() (string, error) {
 	paths := []string{
-		`C:\Program Files\Google\Chrome\Application\chrome.exe`,
-		`C:\Program Files (x86)\Google\Chrome\Application\chrome.exe`,
+		`C:\Program Files\Adobe\Acrobat DC\Acrobat\Acrobat.exe`,
+		`C:\Program Files (x86)\Adobe\Acrobat DC\Acrobat\Acrobat.exe`,
+		`C:\Program Files\Adobe\Acrobat Reader DC\Reader\AcroRd32.exe`,
+		`C:\Program Files (x86)\Adobe\Acrobat Reader DC\Reader\AcroRd32.exe`,
+		`C:\Program Files\Adobe\Reader 11.0\Reader\AcroRd32.exe`,
+		`C:\Program Files (x86)\Adobe\Reader 11.0\Reader\AcroRd32.exe`,
 	}
 	for _, p := range paths {
 		if _, err := os.Stat(p); err == nil {
 			return p, nil
 		}
 	}
-	return "", fmt.Errorf("Chrome not found")
+	return "", fmt.Errorf("Adobe Reader not found")
+}
+
+// findFoxitReader attempts to locate Foxit PDF Reader.
+func findFoxitReader() (string, error) {
+	paths := []string{
+		`C:\Program Files\Foxit Software\Foxit PDF Reader\FoxitPDFReader.exe`,
+		`C:\Program Files (x86)\Foxit Software\Foxit PDF Reader\FoxitPDFReader.exe`,
+		`C:\Program Files\Foxit Software\Foxit Reader\FoxitReader.exe`,
+		`C:\Program Files (x86)\Foxit Software\Foxit Reader\FoxitReader.exe`,
+	}
+	for _, p := range paths {
+		if _, err := os.Stat(p); err == nil {
+			return p, nil
+		}
+	}
+	return "", fmt.Errorf("Foxit Reader not found")
+}
+
+// installSumatraPDF attempts to install SumatraPDF silently via winget.
+func installSumatraPDF() error {
+	// Try winget first (built into Windows 10 1809+ and Windows 11).
+	cmd := exec.Command("winget", "install",
+		"--id", "SumatraPDF.SumatraPDF",
+		"--exact", "--silent",
+		"--accept-package-agreements",
+		"--accept-source-agreements",
+	)
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("winget install failed: %w — %s", err, string(output))
+	}
+	return nil
 }

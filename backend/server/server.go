@@ -50,10 +50,11 @@ type Server struct {
 	authToken      string
 	printQueue     chan pendingJob
 	onJobUpdate    func()
+	onJobNotify    func(status, filename, printerName, errMsg string)
 }
 
 // New creates and configures the HTTP print server.
-func New(addr string, authToken string, ps *printer.Service, logger func(string), onJobUpdate func()) *Server {
+func New(addr string, authToken string, ps *printer.Service, logger func(string), onJobUpdate func(), onJobNotify func(status, filename, printerName, errMsg string)) *Server {
 	s := &Server{
 		printerService: ps,
 		Logger:         logger,
@@ -61,6 +62,7 @@ func New(addr string, authToken string, ps *printer.Service, logger func(string)
 		authToken:      authToken,
 		printQueue:     make(chan pendingJob, 100),
 		onJobUpdate:    onJobUpdate,
+		onJobNotify:    onJobNotify,
 	}
 	if s.Logger == nil {
 		s.Logger = func(msg string) { fmt.Println(msg) }
@@ -193,9 +195,15 @@ func (s *Server) processPrintJob(job pendingJob) {
 		if err := copyFile(job.filePath, destPath); err != nil {
 			s.Logger(fmt.Sprintf("❌ Failed to save virtual print to '%s': %v", destPath, err))
 			s.updateJobStatus(job.jobID, "failed", err.Error())
+			if s.onJobNotify != nil {
+				s.onJobNotify("failed", job.filename, job.printerName, err.Error())
+			}
 		} else {
 			s.Logger(fmt.Sprintf("💾 Saved virtual print successfully to '%s'", destPath))
 			s.updateJobStatus(job.jobID, "saved", "")
+			if s.onJobNotify != nil {
+				s.onJobNotify("saved", job.filename, job.printerName, "")
+			}
 		}
 		return
 	}
@@ -203,10 +211,16 @@ func (s *Server) processPrintJob(job pendingJob) {
 	if err := s.printerService.PrintPDF(job.printerName, job.filePath, job.opts); err != nil {
 		s.Logger(fmt.Sprintf("❌ Print failed for '%s': %v", job.filename, err))
 		s.updateJobStatus(job.jobID, "failed", err.Error())
+		if s.onJobNotify != nil {
+			s.onJobNotify("failed", job.filename, job.printerName, err.Error())
+		}
 	} else {
 		s.Logger(fmt.Sprintf("✅ Printed '%s' on '%s' (Pages: %s, Color: %s, Copies: %d)",
 			job.filename, job.printerName, job.opts.Pages, job.opts.Color, job.opts.Copies))
 		s.updateJobStatus(job.jobID, "completed", "")
+		if s.onJobNotify != nil {
+			s.onJobNotify("completed", job.filename, job.printerName, "")
+		}
 
 		// Decrement printer supplies on successful print.
 		pagesCount := estimatePages(job.opts.Pages) * job.opts.Copies
@@ -463,7 +477,7 @@ func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-TakePrint-Token")
 
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusOK)

@@ -20,6 +20,7 @@ import (
 	"takeprint/backend/remote"
 	"takeprint/backend/server"
 
+	"github.com/gen2brain/beeep"
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
@@ -130,9 +131,11 @@ type App struct {
 	httpServer     *server.Server
 	remoteManager  *remote.Manager
 
-	logs   []LogEntry
-	logMu  sync.Mutex
-	maxLog int
+	logs         []LogEntry
+	logMu        sync.Mutex
+	maxLog       int
+	shouldQuit   bool // when true, closing the window exits the app instead of hiding to tray
+	windowHidden bool // tracks whether the window is minimized to tray
 }
 
 // NewApp creates a new App instance.
@@ -176,7 +179,7 @@ func (a *App) startup(ctx context.Context) {
 		if a.ctx != nil {
 			wailsRuntime.EventsEmit(a.ctx, "job-updated")
 		}
-	})
+	}, a.onJobNotify)
 	go func() {
 		if err := a.httpServer.Start(); err != nil {
 			a.addLog("error", fmt.Sprintf("HTTP server error: %v", err))
@@ -190,6 +193,58 @@ func (a *App) startup(ctx context.Context) {
 		a.addLog("info", fmt.Sprintf("📱 Loaded %d connected device(s)", len(settings.ConnectedDevices)))
 	}
 	a.remoteManager.StartHealthChecker()
+
+	// Start the system tray icon.
+	a.initSystemTray()
+	a.addLog("success", "System tray initialized")
+}
+
+// beforeClose is called when the user clicks the close button.
+// It hides the window to the system tray instead of exiting,
+// unless the "Exit" tray menu item was clicked.
+func (a *App) beforeClose(ctx context.Context) (prevent bool) {
+	if a.shouldQuit {
+		return false // allow the app to exit
+	}
+	// Hide the window instead of closing — the app keeps running in the tray.
+	wailsRuntime.WindowHide(ctx)
+	a.windowHidden = true
+	a.addLog("info", "🔽 Minimized to system tray")
+	return true // prevent the close
+}
+
+// onJobNotify is called when a print job completes, fails, or is saved.
+// It sends a Windows toast notification when the window is hidden.
+func (a *App) onJobNotify(status, filename, printerName, errMsg string) {
+	if !a.windowHidden {
+		return // no notification needed when the window is visible
+	}
+
+	var title, message string
+	switch status {
+	case "completed":
+		title = "✅ Print Completed"
+		message = fmt.Sprintf("%s printed on %s", filename, printerName)
+	case "saved":
+		title = "💾 File Saved"
+		message = fmt.Sprintf("%s saved to downloads folder", filename)
+	case "failed":
+		title = "❌ Print Failed"
+		if errMsg != "" {
+			message = fmt.Sprintf("%s failed on %s: %s", filename, printerName, errMsg)
+		} else {
+			message = fmt.Sprintf("%s failed on %s", filename, printerName)
+		}
+	default:
+		return
+	}
+
+	// Send Windows toast notification.
+	go func() {
+		if err := beeep.Notify(title, message, ""); err != nil {
+			a.addLog("warn", fmt.Sprintf("Failed to send notification: %v", err))
+		}
+	}()
 }
 
 // shutdown is called when the Wails app is closing.
