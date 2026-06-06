@@ -7,9 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version to release (e.g. 1.0.0)'
-        required: true
-        default: '1.0.0'
+        description: 'Version to release (e.g. 1.0.0, or "next" for auto-increment)'
+        required: false
+        default: 'next'
 
 permissions:
   contents: write
@@ -22,16 +22,45 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Fetch all history and tags for version calculation
 
       - name: Determine Release Tag
         id: tag
         shell: bash
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "version=v${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          # Fetch all tags so we can see the latest
+          git fetch --tags
+          
+          INPUT_VERSION="${{ github.event.inputs.version }}"
+          
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "$INPUT_VERSION" != "next" ] && [ -n "$INPUT_VERSION" ]; then
+            # User specified a custom version
+            if [[ "$INPUT_VERSION" =~ ^v ]]; then
+              VERSION="$INPUT_VERSION"
+            else
+              VERSION="v$INPUT_VERSION"
+            fi
+            echo "Determined user version: $VERSION"
           else
-            echo "version=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+            # Calculate next version
+            LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v1.0.0")
+            echo "Latest tag found: $LATEST_TAG"
+            
+            # Parse version components (assuming format vX.Y.Z)
+            if [[ "$LATEST_TAG" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+              MAJOR="${BASH_REMATCH[1]}"
+              MINOR="${BASH_REMATCH[2]}"
+              PATCH="${BASH_REMATCH[3]}"
+              # Increment patch version
+              NEW_PATCH=$((PATCH + 1))
+              VERSION="v$MAJOR.$MINOR.$NEW_PATCH"
+            else
+              VERSION="v1.0.0"
+            fi
+            echo "Auto-incremented to version: $VERSION"
           fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -42,6 +71,9 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22.12.0'
+
+      - name: Install NSIS
+        run: choco install nsis -y
 
       - name: Install Wails CLI
         run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
