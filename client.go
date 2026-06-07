@@ -187,6 +187,17 @@ func (a *App) GetInstalledTakePrintPrinters() ([]string, error) {
 
 // InstallRemotePrinter creates a local port and virtual printer that redirects print output to the remote server.
 func (a *App) InstallRemotePrinter(serverName, serverIP string, serverPort int, remotePrinter string, authToken string) error {
+	// Automatically resolve authToken from connected devices if not passed
+	if authToken == "" {
+		settings := a.loadSettings()
+		for _, d := range settings.ConnectedDevices {
+			if d.Name == serverName {
+				authToken = d.Token
+				break
+			}
+		}
+	}
+
 	queueName := fmt.Sprintf("%s (%s)", remotePrinter, serverName)
 	cleanQueueName := strings.ReplaceAll(queueName, "/", "_")
 	cleanQueueName = strings.ReplaceAll(cleanQueueName, "\\", "_")

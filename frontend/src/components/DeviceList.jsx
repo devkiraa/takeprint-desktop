@@ -4,10 +4,23 @@ import { useState, useEffect, useCallback } from 'react';
  * DeviceList — Displays connected remote TakePrint servers and allows
  * scanning for / adding new devices on the local network.
  */
-export default function DeviceList({ onRemotePrintersUpdate }) {
+export default function DeviceList({ remotePrinters = [], onRemotePrintersUpdate }) {
   const [devices, setDevices] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showScanModal, setShowScanModal] = useState(false);
+  const [installedList, setInstalledList] = useState([]);
+  const [installingName, setInstallingName] = useState(null);
+
+  const fetchInstalled = useCallback(async () => {
+    if (window.go?.main?.App?.GetInstalledTakePrintPrinters) {
+      try {
+        const list = await window.go.main.App.GetInstalledTakePrintPrinters();
+        setInstalledList(list || []);
+      } catch (err) {
+        console.error('Failed to fetch installed printers:', err);
+      }
+    }
+  }, []);
 
   const fetchDevices = useCallback(async () => {
     try {
@@ -42,9 +55,13 @@ export default function DeviceList({ onRemotePrintersUpdate }) {
 
   useEffect(() => {
     fetchDevices();
-    const interval = setInterval(fetchDevices, 15000);
+    fetchInstalled();
+    const interval = setInterval(() => {
+      fetchDevices();
+      fetchInstalled();
+    }, 15000);
     return () => clearInterval(interval);
-  }, [fetchDevices]);
+  }, [fetchDevices, fetchInstalled]);
 
   useEffect(() => {
     if (devices.length > 0) {
@@ -66,6 +83,47 @@ export default function DeviceList({ onRemotePrintersUpdate }) {
   const handleDeviceAdded = () => {
     fetchDevices();
     fetchRemotePrinters();
+    fetchInstalled();
+  };
+
+  const handleInstall = async (deviceName, deviceIp, devicePort, printerName) => {
+    const queueName = `${printerName} (${deviceName})`;
+    setInstallingName(queueName);
+    if (window.go?.main?.App?.InstallRemotePrinter) {
+      try {
+        await window.go.main.App.InstallRemotePrinter(deviceName, deviceIp, devicePort, printerName, "");
+        await fetchInstalled();
+      } catch (err) {
+        alert("Installation failed: " + err);
+      } finally {
+        setInstallingName(null);
+      }
+    } else {
+      setTimeout(() => {
+        setInstalledList(prev => [...prev, queueName]);
+        setInstallingName(null);
+      }, 1500);
+    }
+  };
+
+  const handleUninstall = async (deviceName, printerName) => {
+    const queueName = `${printerName} (${deviceName})`;
+    setInstallingName(queueName);
+    if (window.go?.main?.App?.UninstallRemotePrinter) {
+      try {
+        await window.go.main.App.UninstallRemotePrinter(queueName);
+        await fetchInstalled();
+      } catch (err) {
+        alert("Uninstall failed: " + err);
+      } finally {
+        setInstallingName(null);
+      }
+    } else {
+      setTimeout(() => {
+        setInstalledList(prev => prev.filter(item => item !== queueName));
+        setInstallingName(null);
+      }, 1000);
+    }
   };
 
   return (
@@ -117,46 +175,98 @@ export default function DeviceList({ onRemotePrintersUpdate }) {
           </div>
         )}
 
-        {devices.map((device, index) => (
-          <div
-            key={device.name}
-            className="glass-card p-3.5 animate-fade-in flex items-center justify-between gap-3 group cursor-default"
-            style={{ animationDelay: `${index * 60}ms` }}
-          >
-            <div className="flex items-center gap-3 min-w-0">
-              {/* Status dot */}
-              <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${
-                device.status === 'online'
-                  ? 'bg-success-400 animate-pulse'
-                  : device.status === 'checking'
-                    ? 'bg-warn-400 animate-pulse'
-                    : 'bg-error-400'
-              }`} />
-              <div className="min-w-0">
-                <h3 className="text-sm font-medium text-slate-200 truncate">{device.name}</h3>
-                <p className="text-[10px] text-slate-500 truncate">
-                  {device.activeIP || device.ips?.[0] || 'Unknown IP'}:{device.port}
-                  <span className="ml-1.5">•</span>
-                  <span className={`ml-1.5 font-semibold uppercase ${
-                    device.status === 'online' ? 'text-success-400' :
-                    device.status === 'checking' ? 'text-warn-400' : 'text-error-400'
-                  }`}>
-                    {device.status}
-                  </span>
-                </p>
-              </div>
-            </div>
-            <button
-              onClick={() => handleRemoveDevice(device.name)}
-              className="opacity-0 group-hover:opacity-100 p-1.5 rounded-lg text-slate-500 hover:text-error-400 hover:bg-error-400/10 transition-all duration-200 cursor-pointer shrink-0"
-              title="Remove device"
+        {devices.map((device, index) => {
+          const devicePrinters = remotePrinters.filter(rp => rp.deviceName === device.name);
+          return (
+            <div
+              key={device.name}
+              className="glass-card p-3.5 animate-fade-in flex flex-col gap-2.5 group cursor-default"
+              style={{ animationDelay: `${index * 60}ms` }}
             >
-              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-          </div>
-        ))}
+              <div className="flex items-center justify-between gap-3 w-full">
+                <div className="flex items-center gap-3 min-w-0">
+                  {/* Status dot */}
+                  <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${
+                    device.status === 'online'
+                      ? 'bg-success-400 animate-pulse'
+                      : device.status === 'checking'
+                        ? 'bg-warn-400 animate-pulse'
+                        : 'bg-error-400'
+                  }`} />
+                  <div className="min-w-0">
+                    <h3 className="text-sm font-medium text-slate-200 truncate">{device.name}</h3>
+                    <p className="text-[10px] text-slate-500 truncate">
+                      {device.activeIP || device.ips?.[0] || 'Unknown IP'}:{device.port}
+                      <span className="ml-1.5">•</span>
+                      <span className={`ml-1.5 font-semibold uppercase ${
+                        device.status === 'online' ? 'text-success-400' :
+                        device.status === 'checking' ? 'text-warn-400' : 'text-error-400'
+                      }`}>
+                        {device.status}
+                      </span>
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => handleRemoveDevice(device.name)}
+                  className="opacity-0 group-hover:opacity-100 p-1.5 rounded-lg text-slate-500 hover:text-error-400 hover:bg-error-400/10 transition-all duration-200 cursor-pointer shrink-0"
+                  title="Remove device"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+
+              {/* Sub-list of shared printers if online */}
+              {device.status === 'online' && devicePrinters.length > 0 && (
+                <div className="mt-1 pt-2.5 border-t border-surface-700/30 flex flex-col gap-1.5">
+                  <div className="text-[8px] font-bold text-slate-500 uppercase tracking-wider">Shared Printers</div>
+                  <div className="flex flex-col gap-1.5">
+                    {devicePrinters.map(p => {
+                      const queueName = `${p.name} (${device.name})`;
+                      const isInstalled = installedList.includes(queueName);
+                      const isPending = installingName === queueName;
+                      return (
+                        <div key={p.name} className="flex items-center justify-between gap-2 bg-surface-900/60 border border-surface-800/40 px-2 py-1.5 rounded-lg text-[10px]">
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <svg className="w-3 h-3 text-accent-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M6.72 13.829c-.24.03-.48.062-.72.096m.72-.096a42.415 42.415 0 0110.56 0m-10.56 0L6.34 18m10.94-4.171c.24.03.48.062.72.096m-.72-.096L17.66 18" />
+                            </svg>
+                            <span className="text-slate-300 font-medium truncate" title={p.name}>{p.name}</span>
+                          </div>
+                          {isInstalled ? (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleUninstall(device.name, p.name);
+                              }}
+                              disabled={installingName !== null}
+                              className="px-2 py-0.5 rounded bg-success-500/10 hover:bg-error-500/15 border border-success-500/20 hover:border-error-500/20 text-success-400 hover:text-error-400 disabled:opacity-50 text-[9px] font-semibold transition-all cursor-pointer flex items-center gap-1 shrink-0"
+                            >
+                              {isPending ? 'Removing...' : 'Installed'}
+                            </button>
+                          ) : (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleInstall(device.name, device.activeIP || device.ips?.[0], device.port, p.name);
+                              }}
+                              disabled={installingName !== null}
+                              className="px-2 py-0.5 rounded bg-accent-500 hover:bg-accent-600 text-white disabled:opacity-50 text-[9px] font-semibold transition-all cursor-pointer shrink-0"
+                            >
+                              {isPending ? 'Installing...' : 'Install'}
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
 
       {/* Scan Modal */}

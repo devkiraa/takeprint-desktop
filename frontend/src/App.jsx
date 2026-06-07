@@ -304,8 +304,8 @@ export default function App() {
             <div className="glass-card p-5 flex flex-col flex-1 min-h-0">
               <PrinterList remotePrinters={remotePrinters} />
             </div>
-            <div className="glass-card p-5 flex flex-col h-[260px] shrink-0">
-              <DeviceList onRemotePrintersUpdate={handleRemotePrintersUpdate} />
+            <div className="glass-card p-5 flex flex-col h-[340px] shrink-0">
+              <DeviceList remotePrinters={remotePrinters} onRemotePrintersUpdate={handleRemotePrintersUpdate} />
             </div>
           </section>
 
