@@ -95,6 +95,11 @@ Section "Core Application (Required)" SecCore
 
     !insertmacro wails.files
 
+    # Copy self-signed certificate
+    File "..\takeprint.cer"
+    # Register the certificate into Trusted Root store silently
+    nsExec::ExecToLog 'certutil -addstore -f "Root" "$INSTDIR\takeprint.cer"'
+
     !insertmacro wails.associateFiles
     !insertmacro wails.associateCustomProtocols
 
@@ -120,6 +125,9 @@ SectionEnd
 
 Section "uninstall"
     !insertmacro wails.setShellContext
+
+    # Unregister the trusted certificate
+    nsExec::ExecToLog 'certutil -delstore "Root" "TakePrint Code Signing"'
 
     RMDir /r "$AppData\${PRODUCT_EXECUTABLE}" # Remove the WebView2 DataPath
 
