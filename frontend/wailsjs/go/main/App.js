@@ -6,6 +6,10 @@ export function AddRemoteDevice(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['AddRemoteDevice'](arg1, arg2, arg3, arg4);
 }
 
+export function CheckForUpdate() {
+  return window['go']['main']['App']['CheckForUpdate']();
+}
+
 export function GetAllRemotePrinters() {
   return window['go']['main']['App']['GetAllRemotePrinters']();
 }
@@ -46,6 +50,10 @@ export function GetServerStatus() {
   return window['go']['main']['App']['GetServerStatus']();
 }
 
+export function GetVersion() {
+  return window['go']['main']['App']['GetVersion']();
+}
+
 export function GetVirtualPrinterDir() {
   return window['go']['main']['App']['GetVirtualPrinterDir']();
 }
@@ -72,6 +80,10 @@ export function SelectVirtualPrinterDir() {
 
 export function SetAutoLaunch(arg1) {
   return window['go']['main']['App']['SetAutoLaunch'](arg1);
+}
+
+export function StartUpdate(arg1) {
+  return window['go']['main']['App']['StartUpdate'](arg1);
 }
 
 export function TogglePrinterShare(arg1, arg2) {

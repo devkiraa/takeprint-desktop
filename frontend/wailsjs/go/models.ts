@@ -34,6 +34,24 @@ export namespace main {
 	        this.printerCount = source["printerCount"];
 	    }
 	}
+	export class UpdateCheckResult {
+	    updateAvailable: boolean;
+	    latestVersion: string;
+	    downloadUrl: string;
+	    releaseNotes: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new UpdateCheckResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.updateAvailable = source["updateAvailable"];
+	        this.latestVersion = source["latestVersion"];
+	        this.downloadUrl = source["downloadUrl"];
+	        this.releaseNotes = source["releaseNotes"];
+	    }
+	}
 
 }
 

@@ -20,6 +20,7 @@ export default function App() {
     return saved === 'light' ? 'light' : 'black';
   });
   const [serverName, setServerName] = useState('TakePrint');
+  const [appVersion, setAppVersion] = useState('1.0.2');
   const [isEditingName, setIsEditingName] = useState(false);
   const [tempName, setTempName] = useState('');
   const [autoLaunch, setAutoLaunch] = useState(false);
@@ -80,6 +81,19 @@ export default function App() {
     fetchStatus();
     fetchServerName();
     fetchAutoLaunch();
+
+    const fetchVersion = async () => {
+      if (window.go?.main?.App?.GetVersion) {
+        try {
+          const v = await window.go.main.App.GetVersion();
+          setAppVersion(v);
+        } catch {
+          // Wails not ready.
+        }
+      }
+    };
+    fetchVersion();
+
     const interval = setInterval(fetchStatus, 10000);
     return () => clearInterval(interval);
   }, []);
@@ -276,6 +290,7 @@ export default function App() {
             setIsEditingName={setIsEditingName}
             theme={theme}
             setTheme={setTheme}
+            appVersion={appVersion}
           />
         </section>
 
@@ -311,7 +326,7 @@ export default function App() {
 
       {/* ===== FOOTER ===== */}
       <footer className="flex items-center justify-between px-6 py-2.5 border-t border-surface-700/30 text-[10px] text-slate-600">
-        <span>TakePrint v1.0.0</span>
+        <span>TakePrint v{appVersion}</span>
         <span>
           {status.printerCount} printer{status.printerCount !== 1 ? 's' : ''} available
         </span>
@@ -420,7 +435,8 @@ function SettingsView({
   isEditingName,
   setIsEditingName,
   theme,
-  setTheme
+  setTheme,
+  appVersion
 }) {
   const [savePath, setSavePath] = useState('');
   const [updating, setUpdating] = useState(false);
@@ -610,8 +626,161 @@ function SettingsView({
             </div>
           </button>
         </div>
+
+        {/* Software Updates */}
+        <div className="flex flex-col gap-2 pt-4 border-t border-surface-700/30">
+          <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Software Updates</label>
+          <p className="text-[11px] text-slate-500 mb-3">Check if you are running the latest version of TakePrint and download updates.</p>
+          <UpdateChecker currentVersion={appVersion} />
+        </div>
       </div>
     </div>
   );
 }
 
+
+function UpdateChecker({ currentVersion }) {
+  const [status, setStatus] = useState('idle'); // 'idle' | 'checking' | 'latest' | 'available' | 'downloading' | 'installing' | 'error'
+  const [latestInfo, setLatestInfo] = useState(null);
+  const [progress, setProgress] = useState(0);
+  const [errorMsg, setErrorMsg] = useState('');
+
+  useEffect(() => {
+    if (window.runtime?.EventsOn) {
+      window.runtime.EventsOn('update_progress', (p) => {
+        setStatus('downloading');
+        setProgress(p);
+      });
+      window.runtime.EventsOn('update_status', (s) => {
+        if (s === 'launching') {
+          setStatus('installing');
+        }
+      });
+      window.runtime.EventsOn('update_error', (err) => {
+        setStatus('error');
+        setErrorMsg(err);
+      });
+    }
+  }, []);
+
+  const handleCheck = async () => {
+    setStatus('checking');
+    setErrorMsg('');
+    if (window.go?.main?.App?.CheckForUpdate) {
+      try {
+        const res = await window.go.main.App.CheckForUpdate();
+        if (res.updateAvailable) {
+          setLatestInfo(res);
+          setStatus('available');
+        } else {
+          setStatus('latest');
+        }
+      } catch (err) {
+        setStatus('error');
+        setErrorMsg(err.toString());
+      }
+    } else {
+      // Mock for development
+      setTimeout(() => {
+        setStatus('available');
+        setLatestInfo({
+          latestVersion: 'v1.0.3',
+          downloadUrl: 'https://github.com/devkiraa/takeprint-desktop/releases/download/v1.0.3/TakePrint-Desktop-Installer.exe',
+          releaseNotes: 'Performance improvements, custom installer logos, and an integrated auto-updater.'
+        });
+      }, 1200);
+    }
+  };
+
+  const handleInstall = async () => {
+    if (!latestInfo) return;
+    setStatus('downloading');
+    setProgress(0);
+    if (window.go?.main?.App?.StartUpdate) {
+      try {
+        await window.go.main.App.StartUpdate(latestInfo.downloadUrl);
+      } catch (err) {
+        setStatus('error');
+        setErrorMsg(err.toString());
+      }
+    } else {
+      // Mock for development
+      let p = 0;
+      const interval = setInterval(() => {
+        p += 5;
+        setProgress(p);
+        if (p >= 100) {
+          clearInterval(interval);
+          setStatus('installing');
+        }
+      }, 100);
+    }
+  };
+
+  return (
+    <div className="bg-surface-800/40 border border-surface-700/30 rounded-xl p-4 flex flex-col gap-3">
+      <div className="flex items-center justify-between">
+        <div className="flex flex-col">
+          <span className="text-xs font-semibold text-slate-300">
+            Current Version: <span className="font-mono text-accent-400">v{currentVersion}</span>
+          </span>
+          {status === 'checking' && <span className="text-[10px] text-slate-500 mt-0.5 animate-pulse">Checking GitHub Releases...</span>}
+          {status === 'latest' && <span className="text-[10px] text-success-400 mt-0.5 font-medium">You are running the latest version!</span>}
+          {status === 'available' && (
+            <span className="text-[10px] text-accent-400 mt-0.5 font-semibold animate-pulse">
+              New version available: {latestInfo?.latestVersion}
+            </span>
+          )}
+          {status === 'downloading' && (
+            <span className="text-[10px] text-slate-400 mt-0.5">
+              Downloading installer: {Math.round(progress)}%
+            </span>
+          )}
+          {status === 'installing' && (
+            <span className="text-[10px] text-success-400 mt-0.5 font-semibold animate-pulse">
+              Launching setup wizard... App will exit.
+            </span>
+          )}
+          {status === 'error' && (
+            <span className="text-[10px] text-error-400 mt-0.5 font-medium truncate max-w-sm">
+              Error: {errorMsg}
+            </span>
+          )}
+        </div>
+
+        {(status === 'idle' || status === 'latest' || status === 'error') && (
+          <button
+            onClick={handleCheck}
+            className="px-3.5 py-1.5 rounded-lg bg-surface-800 border border-surface-700/50 text-slate-300 hover:text-slate-100 hover:bg-surface-700/50 text-[11px] font-semibold transition-all cursor-pointer"
+          >
+            Check for Updates
+          </button>
+        )}
+
+        {status === 'available' && (
+          <button
+            onClick={handleInstall}
+            className="px-3.5 py-1.5 rounded-lg bg-accent-500 hover:bg-accent-600 text-white text-[11px] font-semibold transition-all cursor-pointer shadow-lg shadow-accent-500/10"
+          >
+            Update Now
+          </button>
+        )}
+      </div>
+
+      {status === 'downloading' && (
+        <div className="w-full bg-surface-900 rounded-full h-1.5 overflow-hidden">
+          <div className="bg-accent-500 h-1.5 rounded-full transition-all duration-300" style={{ width: `${progress}%` }} />
+        </div>
+      )}
+
+      {status === 'available' && latestInfo?.releaseNotes && (
+        <div className="bg-surface-900/50 border border-surface-700/20 rounded-lg p-2.5 mt-1">
+          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Release Notes:</span>
+          <p className="text-[10px] text-slate-400 leading-relaxed font-mono whitespace-pre-line max-h-32 overflow-y-auto">
+            {latestInfo.releaseNotes}
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}

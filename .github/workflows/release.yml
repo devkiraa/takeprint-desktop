@@ -81,6 +81,26 @@ jobs:
       - name: Install Wails CLI
         run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
 
+      - name: Update Version Files
+        run: |
+          $version = "${{ steps.tag.outputs.version }}"
+          $cleanVersion = $version.TrimStart('v')
+          
+          # Update wails.json productVersion
+          $wailsJson = Get-Content wails.json | ConvertFrom-Json
+          $wailsJson.info.productVersion = $cleanVersion
+          $wailsJson | ConvertTo-Json -Depth 10 | Out-File wails.json -Encoding utf8
+          
+          # Update version.go AppVersion constant
+          $versionGo = @"
+          package main
+          
+          // AppVersion represents the compiled version of the application.
+          // This is overwritten dynamically during the GitHub Release workflow.
+          const AppVersion = "`$cleanVersion"
+          "@
+          $versionGo | Out-File version.go -Encoding utf8
+
       - name: Build Desktop Application
         run: |
           $env:PATH += ";$HOME/go/bin"
