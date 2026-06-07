@@ -10,11 +10,15 @@ export function AddRemoteDevice(arg1:string,arg2:Array<string>,arg3:number,arg4:
 
 export function CheckForUpdate():Promise<main.UpdateCheckResult>;
 
+export function DiscoverRemotePrinters():Promise<Array<main.DiscoveredRemotePrinter>>;
+
 export function GetAllRemotePrinters():Promise<Array<remote.RemotePrinter>>;
 
 export function GetAuthToken():Promise<string>;
 
 export function GetConnectedDevices():Promise<Array<remote.ConnectedDevice>>;
+
+export function GetInstalledTakePrintPrinters():Promise<Array<string>>;
 
 export function GetJobs():Promise<Array<server.PrintJob>>;
 
@@ -34,6 +38,8 @@ export function GetVersion():Promise<string>;
 
 export function GetVirtualPrinterDir():Promise<string>;
 
+export function InstallRemotePrinter(arg1:string,arg2:string,arg3:number,arg4:string,arg5:string):Promise<void>;
+
 export function IsAutoLaunchEnabled():Promise<boolean>;
 
 export function PrintToRemote(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:number):Promise<void>;
@@ -49,6 +55,8 @@ export function SetAutoLaunch(arg1:boolean):Promise<void>;
 export function StartUpdate(arg1:string):Promise<void>;
 
 export function TogglePrinterShare(arg1:string,arg2:boolean):Promise<void>;
+
+export function UninstallRemotePrinter(arg1:string):Promise<void>;
 
 export function UpdateServerName(arg1:string):Promise<void>;
 

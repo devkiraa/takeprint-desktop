@@ -1,5 +1,29 @@
 export namespace main {
 	
+	export class DiscoveredRemotePrinter {
+	    name: string;
+	    serverName: string;
+	    serverIp: string;
+	    serverPort: number;
+	    authToken: string;
+	    installed: boolean;
+	    localQueueName: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new DiscoveredRemotePrinter(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.serverName = source["serverName"];
+	        this.serverIp = source["serverIp"];
+	        this.serverPort = source["serverPort"];
+	        this.authToken = source["authToken"];
+	        this.installed = source["installed"];
+	        this.localQueueName = source["localQueueName"];
+	    }
+	}
 	export class LogEntry {
 	    timestamp: string;
 	    message: string;

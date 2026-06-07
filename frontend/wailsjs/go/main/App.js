@@ -10,6 +10,10 @@ export function CheckForUpdate() {
   return window['go']['main']['App']['CheckForUpdate']();
 }
 
+export function DiscoverRemotePrinters() {
+  return window['go']['main']['App']['DiscoverRemotePrinters']();
+}
+
 export function GetAllRemotePrinters() {
   return window['go']['main']['App']['GetAllRemotePrinters']();
 }
@@ -20,6 +24,10 @@ export function GetAuthToken() {
 
 export function GetConnectedDevices() {
   return window['go']['main']['App']['GetConnectedDevices']();
+}
+
+export function GetInstalledTakePrintPrinters() {
+  return window['go']['main']['App']['GetInstalledTakePrintPrinters']();
 }
 
 export function GetJobs() {
@@ -58,6 +66,10 @@ export function GetVirtualPrinterDir() {
   return window['go']['main']['App']['GetVirtualPrinterDir']();
 }
 
+export function InstallRemotePrinter(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['main']['App']['InstallRemotePrinter'](arg1, arg2, arg3, arg4, arg5);
+}
+
 export function IsAutoLaunchEnabled() {
   return window['go']['main']['App']['IsAutoLaunchEnabled']();
 }
@@ -88,6 +100,10 @@ export function StartUpdate(arg1) {
 
 export function TogglePrinterShare(arg1, arg2) {
   return window['go']['main']['App']['TogglePrinterShare'](arg1, arg2);
+}
+
+export function UninstallRemotePrinter(arg1) {
+  return window['go']['main']['App']['UninstallRemotePrinter'](arg1);
 }
 
 export function UpdateServerName(arg1) {

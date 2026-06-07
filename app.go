@@ -41,12 +41,13 @@ type ServerStatus struct {
 
 // Settings represents the server configuration persisted on disk.
 type Settings struct {
-	ServerName        string                          `json:"serverName"`
-	AutoLaunchEnabled bool                            `json:"autoLaunchEnabled"`
-	PrinterSupplies   map[string][]printer.SupplyInfo `json:"printerSupplies"`
-	VirtualPrinterDir string                          `json:"virtualPrinterDir"`
-	ConnectedDevices  []remote.DeviceConfig           `json:"connectedDevices,omitempty"`
-	AuthToken         string                          `json:"authToken"`
+	ServerName          string                          `json:"serverName"`
+	AutoLaunchEnabled   bool                            `json:"autoLaunchEnabled"`
+	PrinterSupplies     map[string][]printer.SupplyInfo `json:"printerSupplies"`
+	VirtualPrinterDir   string                          `json:"virtualPrinterDir"`
+	ConnectedDevices    []remote.DeviceConfig           `json:"connectedDevices,omitempty"`
+	AuthToken           string                          `json:"authToken"`
+	LocalMappedPrinters map[string]PrinterMapping       `json:"localMappedPrinters,omitempty"`
 }
 
 func getDefaultDownloadsDir() string {
@@ -193,6 +194,9 @@ func (a *App) startup(ctx context.Context) {
 		a.addLog("info", fmt.Sprintf("📱 Loaded %d connected device(s)", len(settings.ConnectedDevices)))
 	}
 	a.remoteManager.StartHealthChecker()
+
+	// Start local printer watcher for network printing interception
+	a.startLocalPrinterWatcher()
 
 	// Start the system tray icon.
 	a.initSystemTray()

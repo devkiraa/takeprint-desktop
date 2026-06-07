@@ -627,6 +627,13 @@ function SettingsView({
           </button>
         </div>
 
+        {/* Network Printers */}
+        <div className="flex flex-col gap-2 pt-4 border-t border-surface-700/30">
+          <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Install Network Printers</label>
+          <p className="text-[11px] text-slate-500 mb-3">Add printers shared by other TakePrint servers on your network directly to your Windows print dialog.</p>
+          <NetworkPrinterFinder />
+        </div>
+
         {/* Software Updates */}
         <div className="flex flex-col gap-2 pt-4 border-t border-surface-700/30">
           <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Software Updates</label>
@@ -784,3 +791,170 @@ function UpdateChecker({ currentVersion }) {
     </div>
   );
 }
+
+
+function NetworkPrinterFinder() {
+  const [printers, setPrinters] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [installingName, setInstallingName] = useState(null);
+
+  const scanPrinters = useCallback(async () => {
+    setLoading(true);
+    if (window.go?.main?.App?.DiscoverRemotePrinters) {
+      try {
+        const list = await window.go.main.App.DiscoverRemotePrinters();
+        setPrinters(list || []);
+      } catch (err) {
+        console.error("Failed to discover remote printers", err);
+      } finally {
+        setLoading(false);
+      }
+    } else {
+      // Mock for development
+      setTimeout(() => {
+        setPrinters([
+          {
+            name: "HP LaserJet Pro M402dn",
+            serverName: "Office-Server",
+            serverIp: "192.168.1.150",
+            serverPort: 8080,
+            authToken: "mock_token",
+            installed: false,
+            localQueueName: "HP LaserJet Pro M402dn (Office-Server)"
+          },
+          {
+            name: "Canon ImageRUNNER C3025",
+            serverName: "Reception-Desk",
+            serverIp: "192.168.1.182",
+            serverPort: 8080,
+            authToken: "mock_token",
+            installed: true,
+            localQueueName: "Canon ImageRUNNER C3025 (Reception-Desk)"
+          }
+        ]);
+        setLoading(false);
+      }, 1000);
+    }
+  }, []);
+
+  useEffect(() => {
+    scanPrinters();
+  }, [scanPrinters]);
+
+  const handleInstall = async (p) => {
+    setInstallingName(p.localQueueName);
+    if (window.go?.main?.App?.InstallRemotePrinter) {
+      try {
+        await window.go.main.App.InstallRemotePrinter(p.serverName, p.serverIp, p.serverPort, p.name, p.authToken);
+        await scanPrinters();
+      } catch (err) {
+        alert("Installation failed: " + err);
+      } finally {
+        setInstallingName(null);
+      }
+    } else {
+      // Mock
+      setTimeout(async () => {
+        p.installed = true;
+        await scanPrinters();
+        setInstallingName(null);
+      }, 1500);
+    }
+  };
+
+  const handleUninstall = async (p) => {
+    setInstallingName(p.localQueueName);
+    if (window.go?.main?.App?.UninstallRemotePrinter) {
+      try {
+        await window.go.main.App.UninstallRemotePrinter(p.localQueueName);
+        await scanPrinters();
+      } catch (err) {
+        alert("Uninstall failed: " + err);
+      } finally {
+        setInstallingName(null);
+      }
+    } else {
+      // Mock
+      setTimeout(async () => {
+        p.installed = false;
+        await scanPrinters();
+        setInstallingName(null);
+      }, 1000);
+    }
+  };
+
+  return (
+    <div className="bg-surface-800/40 border border-surface-700/30 rounded-xl p-4 flex flex-col gap-3">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-semibold text-slate-300">Discovered Network Printers</span>
+        <button
+          onClick={scanPrinters}
+          disabled={loading}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-surface-800 border border-surface-700/50 text-slate-300 hover:text-slate-100 hover:bg-surface-700/50 disabled:opacity-50 text-[10px] font-semibold transition-all cursor-pointer"
+        >
+          {loading ? (
+            <svg className="animate-spin h-3.5 w-3.5 text-slate-300" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+            </svg>
+          ) : (
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 7.89H18" />
+            </svg>
+          )}
+          <span>Scan Network</span>
+        </button>
+      </div>
+
+      {loading && printers.length === 0 ? (
+        <div className="text-center py-6 text-slate-500 text-[11px]">Scanning local network for TakePrint servers...</div>
+      ) : printers.length === 0 ? (
+        <div className="text-center py-6 text-slate-500 text-[11px]">No remote TakePrint printers found on network.</div>
+      ) : (
+        <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+          {printers.map((p, idx) => (
+            <div key={idx} className="flex items-center justify-between bg-surface-900/50 border border-surface-700/20 p-2.5 rounded-lg">
+              <div className="flex flex-col min-w-0">
+                <span className="text-xs font-semibold text-slate-200 truncate">{p.name}</span>
+                <span className="text-[10px] text-slate-400 mt-0.5 flex items-center gap-1.5">
+                  <span className="font-semibold text-slate-300">Server: {p.serverName}</span>
+                  <span>({p.serverIp})</span>
+                </span>
+              </div>
+
+              <div className="flex items-center gap-3">
+                {p.installed ? (
+                  <>
+                    <span className="text-[9px] font-semibold text-success-400 bg-success-400/10 px-2 py-0.5 rounded border border-success-400/20 flex items-center gap-1">
+                      <span className="w-1.5 h-1.5 bg-success-400 rounded-full" />
+                      Installed
+                    </span>
+                    <button
+                      onClick={() => handleUninstall(p)}
+                      disabled={installingName !== null}
+                      className="px-2.5 py-1 rounded bg-error-500/10 hover:bg-error-500/20 border border-error-500/20 text-error-400 disabled:opacity-50 text-[10px] font-medium transition-all cursor-pointer"
+                    >
+                      {installingName === p.localQueueName ? 'Removing...' : 'Remove'}
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <span className="text-[9px] font-semibold text-slate-500 bg-surface-800 px-2 py-0.5 rounded border border-surface-700">Not Installed</span>
+                    <button
+                      onClick={() => handleInstall(p)}
+                      disabled={installingName !== null}
+                      className="px-2.5 py-1 rounded bg-accent-500 hover:bg-accent-600 text-white disabled:opacity-50 text-[10px] font-medium transition-all cursor-pointer"
+                    >
+                      {installingName === p.localQueueName ? 'Installing...' : 'Install'}
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
