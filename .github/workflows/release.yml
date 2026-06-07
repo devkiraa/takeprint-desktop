@@ -116,6 +116,15 @@ jobs:
         with:
           tag_name: ${{ steps.tag.outputs.version }}
           name: Release ${{ steps.tag.outputs.version }}
+          body: |
+            ### 📥 Installation & Setup
+            * **Recommended**: Download and run **`TakePrint-Desktop-Installer.exe`**. It sets up Start Menu & Desktop shortcuts, registers the uninstaller, and enables automatic background updates.
+            * **Portable**: Use **`TakePrint-Desktop.exe`** to run the app instantly without installation (does not support automatic updates).
+            
+            ---
+            
+            ### 🛠️ What's Changed
+          generate_release_notes: true
           files: |
             build/bin/TakePrint-Desktop.exe
             build/bin/TakePrint-Desktop-Installer.exe
