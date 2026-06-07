@@ -153,7 +153,30 @@ export default function JobQueue() {
                   <span>{job.submittedAt}</span>
                 </p>
               </div>
-              <div className="shrink-0">{getStatusBadge(job.status)}</div>
+              <div className="flex items-center gap-2.5 shrink-0">
+                {getStatusBadge(job.status)}
+                {job.status === 'printing' && (
+                  <button
+                    onClick={async (e) => {
+                      e.stopPropagation();
+                      if (window.go?.main?.App?.CancelPrintJob) {
+                        try {
+                          await window.go.main.App.CancelPrintJob(job.id);
+                          fetchJobs();
+                        } catch (err) {
+                          console.error(err);
+                        }
+                      }
+                    }}
+                    className="p-1 rounded bg-error-500/10 hover:bg-error-500/20 text-error-400 hover:text-error-300 transition-all duration-200 cursor-pointer flex items-center justify-center"
+                    title="Cancel print job"
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                )}
+              </div>
             </div>
 
             {/* Config & Error info */}

@@ -44,7 +44,7 @@ func Start(serviceName string, port int, token string, logger func(string)) (*Se
 		return nil, fmt.Errorf("mDNS registration failed: %w", err)
 	}
 
-	logger(fmt.Sprintf("📡 mDNS broadcasting '_localshareprint._tcp' on %s:%d (Available IPs: %s)", localIP, port, ipsStr))
+	logger(fmt.Sprintf("mDNS broadcasting '_localshareprint._tcp' on %s:%d (Available IPs: %s)", localIP, port, ipsStr))
 
 	return &Server{zc: server, Logger: logger}, nil
 }
@@ -54,7 +54,7 @@ func (s *Server) Stop() {
 	if s.zc != nil {
 		s.zc.Shutdown()
 		if s.Logger != nil {
-			s.Logger("🛑 mDNS service stopped")
+			s.Logger("mDNS service stopped")
 		}
 	}
 }

@@ -6,6 +6,10 @@ export function AddRemoteDevice(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['AddRemoteDevice'](arg1, arg2, arg3, arg4);
 }
 
+export function CancelPrintJob(arg1) {
+  return window['go']['main']['App']['CancelPrintJob'](arg1);
+}
+
 export function CheckForUpdate() {
   return window['go']['main']['App']['CheckForUpdate']();
 }

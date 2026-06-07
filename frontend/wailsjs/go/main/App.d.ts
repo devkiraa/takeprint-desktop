@@ -8,6 +8,8 @@ import {mdns} from '../models';
 
 export function AddRemoteDevice(arg1:string,arg2:Array<string>,arg3:number,arg4:string):Promise<void>;
 
+export function CancelPrintJob(arg1:string):Promise<void>;
+
 export function CheckForUpdate():Promise<main.UpdateCheckResult>;
 
 export function DiscoverRemotePrinters():Promise<Array<main.DiscoveredRemotePrinter>>;

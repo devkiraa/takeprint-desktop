@@ -156,11 +156,11 @@ func NewApp() *App {
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 
-	a.addLog("info", "🚀 TakePrint starting up...")
+	a.addLog("info", "TakePrint starting up...")
 
 	// Load settings
 	settings := a.loadSettings()
-	a.addLog("info", fmt.Sprintf("⚙️ Loaded server name: %s", settings.ServerName))
+	a.addLog("info", fmt.Sprintf("Loaded server name: %s", settings.ServerName))
 
 	// Sync printer supplies into the service
 	a.printerService.SetSupplies(settings.PrinterSupplies)
@@ -180,7 +180,17 @@ func (a *App) startup(ctx context.Context) {
 		if a.ctx != nil {
 			wailsRuntime.EventsEmit(a.ctx, "job-updated")
 		}
-	}, a.onJobNotify)
+	}, a.onJobNotify, func(jobID string, pagesPrinted, totalPages int, filename, printerName string) {
+		if a.ctx != nil {
+			wailsRuntime.EventsEmit(a.ctx, "print-progress", map[string]interface{}{
+				"jobId":        jobID,
+				"pagesPrinted": pagesPrinted,
+				"totalPages":   totalPages,
+				"filename":     filename,
+				"printerName":  printerName,
+			})
+		}
+	})
 	go func() {
 		if err := a.httpServer.Start(); err != nil {
 			a.addLog("error", fmt.Sprintf("HTTP server error: %v", err))
@@ -191,7 +201,7 @@ func (a *App) startup(ctx context.Context) {
 	// Load connected remote devices and start health checker.
 	if len(settings.ConnectedDevices) > 0 {
 		a.remoteManager.LoadDevices(settings.ConnectedDevices)
-		a.addLog("info", fmt.Sprintf("📱 Loaded %d connected device(s)", len(settings.ConnectedDevices)))
+		a.addLog("info", fmt.Sprintf("Loaded %d connected device(s)", len(settings.ConnectedDevices)))
 	}
 	a.remoteManager.StartHealthChecker()
 
@@ -213,7 +223,7 @@ func (a *App) beforeClose(ctx context.Context) (prevent bool) {
 	// Hide the window instead of closing — the app keeps running in the tray.
 	wailsRuntime.WindowHide(ctx)
 	a.windowHidden = true
-	a.addLog("info", "🔽 Minimized to system tray")
+	a.addLog("info", "Minimized to system tray")
 	return true // prevent the close
 }
 
@@ -265,7 +275,7 @@ func (a *App) shutdown(ctx context.Context) {
 		a.mdnsServer.Stop()
 	}
 
-	a.addLog("info", "👋 TakePrint stopped")
+	a.addLog("info", "TakePrint stopped")
 }
 
 // --- Bound Methods (callable from frontend) ---
@@ -291,9 +301,9 @@ func (a *App) GetPrinters() ([]printer.PrinterInfo, error) {
 func (a *App) TogglePrinterShare(name string, shared bool) {
 	a.printerService.TogglePrinterShare(name, shared)
 	if shared {
-		a.addLog("success", fmt.Sprintf("🔓 Enabled sharing for printer '%s'", name))
+		a.addLog("success", fmt.Sprintf("Enabled sharing for printer '%s'", name))
 	} else {
-		a.addLog("warn", fmt.Sprintf("🔒 Disabled sharing for printer '%s'", name))
+		a.addLog("warn", fmt.Sprintf("Disabled sharing for printer '%s'", name))
 	}
 }
 
@@ -320,7 +330,7 @@ func (a *App) UpdateServerName(newName string) error {
 		return fmt.Errorf("failed to save settings: %w", err)
 	}
 
-	a.addLog("info", fmt.Sprintf("🔄 Updating print server name to: %s", newName))
+	a.addLog("info", fmt.Sprintf("Updating print server name to: %s", newName))
 
 	// Stop current mDNS
 	if a.mdnsServer != nil {
@@ -334,7 +344,7 @@ func (a *App) UpdateServerName(newName string) error {
 		return err
 	}
 	a.mdnsServer = mdnsSrv
-	a.addLog("success", fmt.Sprintf("📡 Server name changed. mDNS broadcasting as '%s'", newName))
+	a.addLog("success", fmt.Sprintf("Server name changed. mDNS broadcasting as '%s'", newName))
 	return nil
 }
 
@@ -354,7 +364,7 @@ func (a *App) UpdateVirtualPrinterDir(path string) error {
 	// Sync it with the printerService
 	a.printerService.SetVirtualPrinterDir(path)
 
-	a.addLog("info", fmt.Sprintf("⚙️ Save location for virtual printers updated to: %s", path))
+	a.addLog("info", fmt.Sprintf("Save location for virtual printers updated to: %s", path))
 	return a.saveSettings(s)
 }
 
@@ -476,9 +486,9 @@ func (a *App) SetAutoLaunch(enable bool) error {
 	a.saveSettings(s)
 
 	if enable {
-		a.addLog("success", "⚙️ Auto-Launch enabled. TakePrint will start on Windows boot.")
+		a.addLog("success", "Auto-Launch enabled. TakePrint will start on Windows boot.")
 	} else {
-		a.addLog("info", "⚙️ Auto-Launch disabled.")
+		a.addLog("info", "Auto-Launch disabled.")
 	}
 	return nil
 }
@@ -524,7 +534,7 @@ func (a *App) AddRemoteDevice(name string, ips []string, port int, token string)
 	if err := a.saveSettings(s); err != nil {
 		a.addLog("warn", fmt.Sprintf("Failed to save device config: %v", err))
 	}
-	a.addLog("success", fmt.Sprintf("✅ Connected to remote device: %s", name))
+	a.addLog("success", fmt.Sprintf("Connected to remote device: %s", name))
 	return nil
 }
 
@@ -536,7 +546,7 @@ func (a *App) RemoveRemoteDevice(name string) {
 	s := a.loadSettings()
 	s.ConnectedDevices = a.remoteManager.GetDeviceConfigs()
 	_ = a.saveSettings(s)
-	a.addLog("info", fmt.Sprintf("🔌 Disconnected from device: %s", name))
+	a.addLog("info", fmt.Sprintf("Disconnected from device: %s", name))
 }
 
 // GetConnectedDevices returns the list of connected remote devices with status.
@@ -563,10 +573,19 @@ func (a *App) PrintToRemote(deviceName, printerName, filePath string, pages stri
 	}
 	err := a.remoteManager.ForwardPrintJob(deviceName, printerName, filePath, opts)
 	if err != nil {
-		a.addLog("error", fmt.Sprintf("❌ Remote print failed: %v", err))
+		a.addLog("error", fmt.Sprintf("Remote print failed: %v", err))
 		return err
 	}
-	a.addLog("success", fmt.Sprintf("📤 Print job sent to %s → %s", deviceName, printerName))
+	a.addLog("success", fmt.Sprintf("Print job sent to %s -> %s", deviceName, printerName))
+	return nil
+}
+
+// CancelPrintJob cancels an active or queued print job.
+func (a *App) CancelPrintJob(jobID string) error {
+	a.addLog("info", fmt.Sprintf("Cancel request received for job: %s", jobID))
+	if a.httpServer != nil {
+		return a.httpServer.CancelJob(jobID)
+	}
 	return nil
 }
 

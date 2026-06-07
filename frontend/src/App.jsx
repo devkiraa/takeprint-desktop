@@ -12,7 +12,6 @@ export default function App() {
     httpAddress: ':8080',
     printerCount: 0,
   });
-  const [showConsole, setShowConsole] = useState(false);
   const [showQRModal, setShowQRModal] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [theme, setTheme] = useState(() => {
@@ -25,6 +24,11 @@ export default function App() {
   const [tempName, setTempName] = useState('');
   const [autoLaunch, setAutoLaunch] = useState(false);
   const [remotePrinters, setRemotePrinters] = useState([]);
+  const [printersCollapsed, setPrintersCollapsed] = useState(false);
+  const [devicesCollapsed, setDevicesCollapsed] = useState(true);
+  const [ips, setIps] = useState([]);
+  const [showStatusPopover, setShowStatusPopover] = useState(false);
+  const [activeJobProgress, setActiveJobProgress] = useState(null);
 
   const handleRemotePrintersUpdate = useCallback((printers) => {
     setRemotePrinters(printers || []);
@@ -78,9 +82,23 @@ export default function App() {
       }
     };
 
+    const fetchIPs = async () => {
+      if (window.go?.main?.App?.GetLocalIPs) {
+        try {
+          const list = await window.go.main.App.GetLocalIPs();
+          setIps(list || []);
+        } catch {
+          // Wails not ready.
+        }
+      } else {
+        setIps(["192.168.1.100"]); // Fallback
+      }
+    };
+
     fetchStatus();
     fetchServerName();
     fetchAutoLaunch();
+    fetchIPs();
 
     const fetchVersion = async () => {
       if (window.go?.main?.App?.GetVersion) {
@@ -103,15 +121,43 @@ export default function App() {
       if (e.key === 'Escape') {
         setShowSettings(false);
         setShowQRModal(false);
+        setShowStatusPopover(false);
       }
+    };
+    const handleOutsideClick = () => {
+      setShowStatusPopover(false);
     };
     const preventContextMenu = (e) => e.preventDefault();
     window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('click', handleOutsideClick);
     window.addEventListener('contextmenu', preventContextMenu);
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('click', handleOutsideClick);
       window.removeEventListener('contextmenu', preventContextMenu);
     };
+  }, []);
+
+  useEffect(() => {
+    if (window.runtime?.EventsOn) {
+      window.runtime.EventsOn('print-progress', (progress) => {
+        if (progress.pagesPrinted === -1) {
+          setTimeout(() => {
+            setActiveJobProgress(prev => {
+              if (prev?.jobId === progress.jobId) return null;
+              return prev;
+            });
+          }, 1500);
+        } else {
+          setActiveJobProgress(progress);
+        }
+      });
+      return () => {
+        if (window.runtime?.EventsOff) {
+          window.runtime.EventsOff('print-progress');
+        }
+      };
+    }
   }, []);
 
   const handleSaveName = async () => {
@@ -241,23 +287,17 @@ export default function App() {
             <span className="text-[11px] font-medium">QR Connect</span>
           </button>
 
-          {/* Console Toggle Button */}
-          <button
-            onClick={() => setShowConsole(!showConsole)}
-            className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border transition-all duration-200 cursor-pointer ${
-              showConsole
-                ? 'bg-accent-500/10 border-accent-500/30 text-accent-400'
-                : 'bg-surface-800/80 border-surface-700/50 text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-            </svg>
-            <span className="text-[11px] font-medium">Console</span>
-          </button>
 
           {/* Server Status */}
-          <div id="server-status" className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-surface-800/80 border border-surface-700/50">
+          <div
+            id="server-status"
+            onClick={(e) => {
+              e.stopPropagation();
+              setShowStatusPopover(!showStatusPopover);
+            }}
+            className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-surface-800/80 border border-surface-700/50 cursor-pointer hover:bg-surface-700/50 transition-colors relative select-none"
+            title="Click to view server diagnostics"
+          >
             <div className={`w-2 h-2 rounded-full ${status.mdnsActive && status.httpActive ? 'bg-success-400 animate-pulse' : 'bg-error-400'}`} />
             <span className="text-[11px] font-medium text-slate-300">Status</span>
             <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${
@@ -267,6 +307,57 @@ export default function App() {
             }`}>
               {status.mdnsActive && status.httpActive ? 'Online' : 'Offline'}
             </span>
+
+            {showStatusPopover && (
+              <div
+                onClick={(e) => e.stopPropagation()}
+                className="absolute right-0 top-full mt-2 w-72 bg-surface-900 border border-surface-700/50 rounded-2xl p-4 shadow-2xl z-50 flex flex-col gap-3.5 animate-fade-in"
+              >
+                <div className="flex items-center justify-between pb-2 border-b border-surface-800">
+                  <span className="text-xs font-bold text-slate-200">Server Diagnostics</span>
+                  <span className={`text-[10px] font-semibold px-2 py-0.5 rounded uppercase ${
+                    status.mdnsActive && status.httpActive
+                      ? 'text-success-400 bg-success-400/10'
+                      : 'text-error-400 bg-error-400/10'
+                  }`}>
+                    {status.mdnsActive && status.httpActive ? 'Online' : 'Offline'}
+                  </span>
+                </div>
+
+                <div className="flex flex-col gap-2 text-xs">
+                  <div className="flex justify-between items-center">
+                    <span className="text-slate-500">Computer Name</span>
+                    <span className="text-slate-300 font-semibold">{serverName}</span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-slate-500">mDNS Service</span>
+                    <span className={`font-semibold ${status.mdnsActive ? 'text-success-400' : 'text-error-400'}`}>
+                      {status.mdnsActive ? 'Active' : 'Inactive'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-slate-500">HTTP Port</span>
+                    <span className="text-slate-300 font-mono">8080</span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-slate-500">HTTP Service</span>
+                    <span className={`font-semibold ${status.httpActive ? 'text-success-400' : 'text-error-400'}`}>
+                      {status.httpActive ? 'Active' : 'Inactive'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-slate-500">Available Printers</span>
+                    <span className="text-slate-300 font-semibold">{status.printerCount}</span>
+                  </div>
+                  <div className="flex justify-between items-start">
+                    <span className="text-slate-500 shrink-0">IP Addresses</span>
+                    <span className="text-slate-300 text-right font-mono truncate max-w-[140px]" title={ips.join(', ')}>
+                      {ips.length > 0 ? ips.join(', ') : 'Loading...'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </header>
@@ -301,11 +392,24 @@ export default function App() {
         >
           {/* Left Column: Printers + Devices */}
           <section className="w-[340px] shrink-0 flex flex-col gap-5 animate-fade-in">
-            <div className="glass-card p-5 flex flex-col flex-1 min-h-0">
-              <PrinterList remotePrinters={remotePrinters} />
+            <div className={`glass-card p-5 flex flex-col transition-all duration-300 min-h-0 ${
+              printersCollapsed ? 'h-[72px] shrink-0 overflow-hidden' : 'flex-1'
+            }`}>
+              <PrinterList
+                remotePrinters={remotePrinters}
+                collapsed={printersCollapsed}
+                onToggleCollapse={() => setPrintersCollapsed(!printersCollapsed)}
+              />
             </div>
-            <div className="glass-card p-5 flex flex-col h-[340px] shrink-0">
-              <DeviceList remotePrinters={remotePrinters} onRemotePrintersUpdate={handleRemotePrintersUpdate} />
+            <div className={`glass-card p-5 flex flex-col transition-all duration-300 min-h-0 ${
+              devicesCollapsed ? 'h-[72px] shrink-0 overflow-hidden' : printersCollapsed ? 'flex-1' : 'h-[340px] shrink-0'
+            }`}>
+              <DeviceList
+                remotePrinters={remotePrinters}
+                onRemotePrintersUpdate={handleRemotePrintersUpdate}
+                collapsed={devicesCollapsed}
+                onToggleCollapse={() => setDevicesCollapsed(!devicesCollapsed)}
+              />
             </div>
           </section>
 
@@ -315,12 +419,6 @@ export default function App() {
           </section>
         </div>
 
-        {/* Right Column: Console */}
-        {showConsole && (
-          <section className="w-[340px] shrink-0 glass-card p-5 flex flex-col animate-fade-in" style={{ animationDelay: '120ms' }}>
-            <LogConsole />
-          </section>
-        )}
       </main>
 
 
@@ -336,30 +434,90 @@ export default function App() {
         <QRModal
           onClose={() => setShowQRModal(false)}
           serverName={serverName}
+          ips={ips}
         />
+      )}
+
+      {/* Floating Print Progress Toast (Bottom Right) */}
+      {activeJobProgress && (
+        <div className="fixed bottom-6 right-6 w-80 bg-surface-900 border border-surface-700/50 rounded-2xl p-4 shadow-2xl z-50 flex flex-col gap-3 animate-slide-in">
+          {/* Header */}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-accent-500"></span>
+              </span>
+              <span className="text-xs font-bold text-slate-200">Printing Spooler Job</span>
+            </div>
+            <button
+              onClick={() => setActiveJobProgress(null)}
+              className="text-slate-500 hover:text-slate-300 p-0.5 rounded transition-colors cursor-pointer"
+              title="Close notification"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+
+          {/* Details */}
+          <div className="min-w-0">
+            <h4 className="text-xs font-semibold text-slate-200 truncate" title={activeJobProgress.filename}>
+              {activeJobProgress.filename}
+            </h4>
+            <p className="text-[10px] text-slate-400 mt-0.5 truncate">
+              Printer: <span className="text-slate-300 font-medium">{activeJobProgress.printerName}</span>
+            </p>
+          </div>
+
+          {/* Progress Bar / Counter */}
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between text-[10px] font-semibold text-slate-500 uppercase tracking-wider">
+              <span>Pages Printed</span>
+              <span className="text-accent-400">
+                {activeJobProgress.pagesPrinted >= 0 ? `${activeJobProgress.pagesPrinted} / ${activeJobProgress.totalPages}` : 'Finished'}
+              </span>
+            </div>
+            <div className="w-full h-1.5 bg-surface-800 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-accent-500 transition-all duration-300 rounded-full"
+                style={{
+                  width: `${activeJobProgress.pagesPrinted >= 0 ? (activeJobProgress.pagesPrinted / activeJobProgress.totalPages) * 100 : 100}%`
+                }}
+              />
+            </div>
+          </div>
+
+          {/* Cancel Button */}
+          {activeJobProgress.pagesPrinted >= 0 && (
+            <button
+              onClick={async () => {
+                if (window.go?.main?.App?.CancelPrintJob) {
+                  try {
+                    await window.go.main.App.CancelPrintJob(activeJobProgress.jobId);
+                    setActiveJobProgress(null);
+                  } catch (err) {
+                    console.error(err);
+                  }
+                }
+              }}
+              className="w-full py-1.5 bg-error-500/10 hover:bg-error-500/20 text-error-400 hover:text-error-300 border border-error-500/20 rounded-xl text-[10px] font-semibold tracking-wide uppercase transition-all duration-200 cursor-pointer"
+            >
+              Cancel Print Job
+            </button>
+          )}
+        </div>
       )}
     </div>
   );
 }
 
-function QRModal({ onClose, serverName }) {
-  const [ips, setIps] = useState([]);
+function QRModal({ onClose, serverName, ips }) {
   const [token, setToken] = useState('');
   const canvasRef = useRef(null);
 
   useEffect(() => {
-    const fetchIPs = async () => {
-      if (window.go?.main?.App?.GetLocalIPs) {
-        try {
-          const list = await window.go.main.App.GetLocalIPs();
-          setIps(list);
-        } catch (err) {
-          console.error("Failed to get local IPs", err);
-        }
-      } else {
-        setIps(["192.168.1.100"]); // Fallback for dev mode
-      }
-    };
     const fetchToken = async () => {
       if (window.go?.main?.App?.GetAuthToken) {
         try {
@@ -372,7 +530,6 @@ function QRModal({ onClose, serverName }) {
         setToken("mock_token_12345");
       }
     };
-    fetchIPs();
     fetchToken();
   }, []);
 
@@ -627,11 +784,9 @@ function SettingsView({
           </button>
         </div>
 
-        {/* Network Printers */}
-        <div className="flex flex-col gap-2 pt-4 border-t border-surface-700/30">
-          <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Install Network Printers</label>
-          <p className="text-[11px] text-slate-500 mb-3">Add printers shared by other TakePrint servers on your network directly to your Windows print dialog.</p>
-          <NetworkPrinterFinder />
+        {/* System Console / Logs */}
+        <div className="flex flex-col gap-2 pt-4 border-t border-surface-700/30 h-[320px] min-h-[300px]">
+          <LogConsole />
         </div>
 
         {/* Software Updates */}
@@ -793,168 +948,4 @@ function UpdateChecker({ currentVersion }) {
 }
 
 
-function NetworkPrinterFinder() {
-  const [printers, setPrinters] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [installingName, setInstallingName] = useState(null);
-
-  const scanPrinters = useCallback(async () => {
-    setLoading(true);
-    if (window.go?.main?.App?.DiscoverRemotePrinters) {
-      try {
-        const list = await window.go.main.App.DiscoverRemotePrinters();
-        setPrinters(list || []);
-      } catch (err) {
-        console.error("Failed to discover remote printers", err);
-      } finally {
-        setLoading(false);
-      }
-    } else {
-      // Mock for development
-      setTimeout(() => {
-        setPrinters([
-          {
-            name: "HP LaserJet Pro M402dn",
-            serverName: "Office-Server",
-            serverIp: "192.168.1.150",
-            serverPort: 8080,
-            authToken: "mock_token",
-            installed: false,
-            localQueueName: "HP LaserJet Pro M402dn (Office-Server)"
-          },
-          {
-            name: "Canon ImageRUNNER C3025",
-            serverName: "Reception-Desk",
-            serverIp: "192.168.1.182",
-            serverPort: 8080,
-            authToken: "mock_token",
-            installed: true,
-            localQueueName: "Canon ImageRUNNER C3025 (Reception-Desk)"
-          }
-        ]);
-        setLoading(false);
-      }, 1000);
-    }
-  }, []);
-
-  useEffect(() => {
-    scanPrinters();
-  }, [scanPrinters]);
-
-  const handleInstall = async (p) => {
-    setInstallingName(p.localQueueName);
-    if (window.go?.main?.App?.InstallRemotePrinter) {
-      try {
-        await window.go.main.App.InstallRemotePrinter(p.serverName, p.serverIp, p.serverPort, p.name, p.authToken);
-        await scanPrinters();
-      } catch (err) {
-        alert("Installation failed: " + err);
-      } finally {
-        setInstallingName(null);
-      }
-    } else {
-      // Mock
-      setTimeout(async () => {
-        p.installed = true;
-        await scanPrinters();
-        setInstallingName(null);
-      }, 1500);
-    }
-  };
-
-  const handleUninstall = async (p) => {
-    setInstallingName(p.localQueueName);
-    if (window.go?.main?.App?.UninstallRemotePrinter) {
-      try {
-        await window.go.main.App.UninstallRemotePrinter(p.localQueueName);
-        await scanPrinters();
-      } catch (err) {
-        alert("Uninstall failed: " + err);
-      } finally {
-        setInstallingName(null);
-      }
-    } else {
-      // Mock
-      setTimeout(async () => {
-        p.installed = false;
-        await scanPrinters();
-        setInstallingName(null);
-      }, 1000);
-    }
-  };
-
-  return (
-    <div className="bg-surface-800/40 border border-surface-700/30 rounded-xl p-4 flex flex-col gap-3">
-      <div className="flex items-center justify-between">
-        <span className="text-xs font-semibold text-slate-300">Discovered Network Printers</span>
-        <button
-          onClick={scanPrinters}
-          disabled={loading}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-surface-800 border border-surface-700/50 text-slate-300 hover:text-slate-100 hover:bg-surface-700/50 disabled:opacity-50 text-[10px] font-semibold transition-all cursor-pointer"
-        >
-          {loading ? (
-            <svg className="animate-spin h-3.5 w-3.5 text-slate-300" fill="none" viewBox="0 0 24 24">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-            </svg>
-          ) : (
-            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 1121.21 7.89H18" />
-            </svg>
-          )}
-          <span>Scan Network</span>
-        </button>
-      </div>
-
-      {loading && printers.length === 0 ? (
-        <div className="text-center py-6 text-slate-500 text-[11px]">Scanning local network for TakePrint servers...</div>
-      ) : printers.length === 0 ? (
-        <div className="text-center py-6 text-slate-500 text-[11px]">No remote TakePrint printers found on network.</div>
-      ) : (
-        <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
-          {printers.map((p, idx) => (
-            <div key={idx} className="flex items-center justify-between bg-surface-900/50 border border-surface-700/20 p-2.5 rounded-lg">
-              <div className="flex flex-col min-w-0">
-                <span className="text-xs font-semibold text-slate-200 truncate">{p.name}</span>
-                <span className="text-[10px] text-slate-400 mt-0.5 flex items-center gap-1.5">
-                  <span className="font-semibold text-slate-300">Server: {p.serverName}</span>
-                  <span>({p.serverIp})</span>
-                </span>
-              </div>
-
-              <div className="flex items-center gap-3">
-                {p.installed ? (
-                  <>
-                    <span className="text-[9px] font-semibold text-success-400 bg-success-400/10 px-2 py-0.5 rounded border border-success-400/20 flex items-center gap-1">
-                      <span className="w-1.5 h-1.5 bg-success-400 rounded-full" />
-                      Installed
-                    </span>
-                    <button
-                      onClick={() => handleUninstall(p)}
-                      disabled={installingName !== null}
-                      className="px-2.5 py-1 rounded bg-error-500/10 hover:bg-error-500/20 border border-error-500/20 text-error-400 disabled:opacity-50 text-[10px] font-medium transition-all cursor-pointer"
-                    >
-                      {installingName === p.localQueueName ? 'Removing...' : 'Remove'}
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    <span className="text-[9px] font-semibold text-slate-500 bg-surface-800 px-2 py-0.5 rounded border border-surface-700">Not Installed</span>
-                    <button
-                      onClick={() => handleInstall(p)}
-                      disabled={installingName !== null}
-                      className="px-2.5 py-1 rounded bg-accent-500 hover:bg-accent-600 text-white disabled:opacity-50 text-[10px] font-medium transition-all cursor-pointer"
-                    >
-                      {installingName === p.localQueueName ? 'Installing...' : 'Install'}
-                    </button>
-                  </>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
 

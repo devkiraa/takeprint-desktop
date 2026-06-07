@@ -7,10 +7,12 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"takeprint/backend/printer"
@@ -42,27 +44,35 @@ type pendingJob struct {
 
 // Server wraps the HTTP server for receiving print jobs.
 type Server struct {
-	httpServer     *http.Server
-	printerService *printer.Service
-	Logger         func(msg string)
-	jobs           []PrintJob
-	jobsMu         sync.RWMutex
-	authToken      string
-	printQueue     chan pendingJob
-	onJobUpdate    func()
-	onJobNotify    func(status, filename, printerName, errMsg string)
+	httpServer      *http.Server
+	printerService  *printer.Service
+	Logger          func(msg string)
+	jobs            []PrintJob
+	jobsMu          sync.RWMutex
+	authToken       string
+	printQueue      chan pendingJob
+	onJobUpdate     func()
+	onJobNotify     func(status, filename, printerName, errMsg string)
+	onJobProgress   func(jobID string, pagesPrinted, totalPages int, filename, printerName string)
+	activeJobs      map[string]string
+	activeJobsMu    sync.Mutex
+	cancelledJobs   map[string]bool
+	cancelledJobsMu sync.Mutex
 }
 
 // New creates and configures the HTTP print server.
-func New(addr string, authToken string, ps *printer.Service, logger func(string), onJobUpdate func(), onJobNotify func(status, filename, printerName, errMsg string)) *Server {
+func New(addr string, authToken string, ps *printer.Service, logger func(string), onJobUpdate func(), onJobNotify func(status, filename, printerName, errMsg string), onJobProgress func(jobID string, pagesPrinted, totalPages int, filename, printerName string)) *Server {
 	s := &Server{
-		printerService: ps,
-		Logger:         logger,
-		jobs:           make([]PrintJob, 0),
-		authToken:      authToken,
-		printQueue:     make(chan pendingJob, 100),
-		onJobUpdate:    onJobUpdate,
-		onJobNotify:    onJobNotify,
+		printerService:  ps,
+		Logger:          logger,
+		jobs:            make([]PrintJob, 0),
+		authToken:       authToken,
+		printQueue:      make(chan pendingJob, 100),
+		onJobUpdate:     onJobUpdate,
+		onJobNotify:     onJobNotify,
+		onJobProgress:   onJobProgress,
+		activeJobs:      make(map[string]string),
+		cancelledJobs:   make(map[string]bool),
 	}
 	if s.Logger == nil {
 		s.Logger = func(msg string) { fmt.Println(msg) }
@@ -89,7 +99,7 @@ func New(addr string, authToken string, ps *printer.Service, logger func(string)
 
 // Start begins listening on the configured address.
 func (s *Server) Start() error {
-	s.Logger(fmt.Sprintf("🌐 HTTP server listening on %s", s.httpServer.Addr))
+	s.Logger(fmt.Sprintf("HTTP server listening on %s", s.httpServer.Addr))
 	if err := s.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		return fmt.Errorf("HTTP server error: %w", err)
 	}
@@ -101,9 +111,9 @@ func (s *Server) Stop() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := s.httpServer.Shutdown(ctx); err != nil {
-		s.Logger(fmt.Sprintf("⚠️ HTTP shutdown error: %v", err))
+		s.Logger(fmt.Sprintf("HTTP shutdown error: %v", err))
 	} else {
-		s.Logger("🛑 HTTP server stopped")
+		s.Logger("HTTP server stopped")
 	}
 }
 
@@ -124,7 +134,7 @@ func (s *Server) verifyToken(w http.ResponseWriter, r *http.Request) bool {
 	}
 
 	if token != s.authToken {
-		s.Logger(fmt.Sprintf("🔒 Rejected unauthorized access from %s", r.RemoteAddr))
+		s.Logger(fmt.Sprintf("Rejected unauthorized access from %s", r.RemoteAddr))
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return false
 	}
@@ -183,6 +193,25 @@ func (s *Server) startQueueWorker() {
 func (s *Server) processPrintJob(job pendingJob) {
 	defer os.Remove(job.filePath)
 
+	s.cancelledJobsMu.Lock()
+	isCancelled := s.cancelledJobs[job.jobID]
+	s.cancelledJobsMu.Unlock()
+
+	if isCancelled {
+		s.Logger(fmt.Sprintf("Skipping cancelled job: %s", job.jobID))
+		return
+	}
+
+	// Clean up active jobs when done
+	defer func() {
+		s.activeJobsMu.Lock()
+		delete(s.activeJobs, job.jobID)
+		s.activeJobsMu.Unlock()
+		if s.onJobProgress != nil {
+			s.onJobProgress(job.jobID, -1, -1, job.filename, job.printerName)
+		}
+	}()
+
 	if printer.IsVirtualPrinter(job.printerName) {
 		saveDir := s.printerService.GetVirtualPrinterDir()
 		if saveDir == "" {
@@ -193,13 +222,13 @@ func (s *Server) processPrintJob(job pendingJob) {
 		destPath = getUniquePath(destPath)
 
 		if err := copyFile(job.filePath, destPath); err != nil {
-			s.Logger(fmt.Sprintf("❌ Failed to save virtual print to '%s': %v", destPath, err))
+			s.Logger(fmt.Sprintf("Failed to save virtual print to '%s': %v", destPath, err))
 			s.updateJobStatus(job.jobID, "failed", err.Error())
 			if s.onJobNotify != nil {
 				s.onJobNotify("failed", job.filename, job.printerName, err.Error())
 			}
 		} else {
-			s.Logger(fmt.Sprintf("💾 Saved virtual print successfully to '%s'", destPath))
+			s.Logger(fmt.Sprintf("Saved virtual print successfully to '%s'", destPath))
 			s.updateJobStatus(job.jobID, "saved", "")
 			if s.onJobNotify != nil {
 				s.onJobNotify("saved", job.filename, job.printerName, "")
@@ -208,14 +237,71 @@ func (s *Server) processPrintJob(job pendingJob) {
 		return
 	}
 
+	// Start WMI print job progress monitoring in a goroutine
+	stopProgress := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(1 * time.Second)
+		defer ticker.Stop()
+
+		tempFileBase := filepath.Base(job.filePath)
+		cleanBase := strings.TrimSuffix(tempFileBase, filepath.Ext(tempFileBase))
+
+		for {
+			select {
+			case <-stopProgress:
+				return
+			case <-ticker.C:
+				s.cancelledJobsMu.Lock()
+				isCancelled := s.cancelledJobs[job.jobID]
+				s.cancelledJobsMu.Unlock()
+				if isCancelled {
+					return
+				}
+
+				// Query WMI for PagesPrinted and TotalPages
+				psCmd := fmt.Sprintf(`Get-CimInstance -ClassName Win32_PrintJob | Where-Object { $_.Document -like "*%s*" } | Select-Object PagesPrinted, TotalPages | ConvertTo-Json`, cleanBase)
+				cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", psCmd)
+				cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+				output, err := cmd.Output()
+				if err == nil && len(output) > 0 {
+					var result struct {
+						PagesPrinted int `json:"PagesPrinted"`
+						TotalPages   int `json:"TotalPages"`
+					}
+					raw := strings.TrimSpace(string(output))
+					if strings.HasPrefix(raw, "[") {
+						var list []map[string]interface{}
+						if json.Unmarshal([]byte(raw), &list) == nil && len(list) > 0 {
+							if pp, ok := list[0]["PagesPrinted"].(float64); ok {
+								result.PagesPrinted = int(pp)
+							}
+							if tp, ok := list[0]["TotalPages"].(float64); ok {
+								result.TotalPages = int(tp)
+							}
+						}
+					} else {
+						_ = json.Unmarshal([]byte(raw), &result)
+					}
+
+					if result.TotalPages > 0 {
+						if s.onJobProgress != nil {
+							s.onJobProgress(job.jobID, result.PagesPrinted, result.TotalPages, job.filename, job.printerName)
+						}
+					}
+				}
+			}
+		}
+	}()
+	defer close(stopProgress)
+
 	if err := s.printerService.PrintPDF(job.printerName, job.filePath, job.opts); err != nil {
-		s.Logger(fmt.Sprintf("❌ Print failed for '%s': %v", job.filename, err))
+		s.Logger(fmt.Sprintf("Print failed for '%s': %v", job.filename, err))
 		s.updateJobStatus(job.jobID, "failed", err.Error())
 		if s.onJobNotify != nil {
 			s.onJobNotify("failed", job.filename, job.printerName, err.Error())
 		}
 	} else {
-		s.Logger(fmt.Sprintf("✅ Printed '%s' on '%s' (Pages: %s, Color: %s, Copies: %d)",
+		s.Logger(fmt.Sprintf("Printed '%s' on '%s' (Pages: %s, Color: %s, Copies: %d)",
 			job.filename, job.printerName, job.opts.Pages, job.opts.Color, job.opts.Copies))
 		s.updateJobStatus(job.jobID, "completed", "")
 		if s.onJobNotify != nil {
@@ -226,6 +312,32 @@ func (s *Server) processPrintJob(job pendingJob) {
 		pagesCount := estimatePages(job.opts.Pages) * job.opts.Copies
 		s.printerService.DecrementSupplies(job.printerName, pagesCount, job.opts.Color)
 	}
+}
+
+// CancelJob cancels an active or queued print job.
+func (s *Server) CancelJob(jobID string) error {
+	s.cancelledJobsMu.Lock()
+	s.cancelledJobs[jobID] = true
+	s.cancelledJobsMu.Unlock()
+
+	s.activeJobsMu.Lock()
+	tempFileBase, ok := s.activeJobs[jobID]
+	s.activeJobsMu.Unlock()
+
+	if ok && tempFileBase != "" {
+		cleanBase := strings.TrimSuffix(tempFileBase, filepath.Ext(tempFileBase))
+		psCmd := fmt.Sprintf(`Get-CimInstance -ClassName Win32_PrintJob | Where-Object { $_.Document -like "*%s*" } | Remove-CimInstance`, cleanBase)
+		cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", psCmd)
+		cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+		_ = cmd.Run()
+		s.Logger(fmt.Sprintf("Cancelled spooler print job for: %s", cleanBase))
+	}
+
+	s.updateJobStatus(jobID, "failed", "Cancelled by user")
+	if s.onJobNotify != nil {
+		s.onJobNotify("failed", "Job", "", "Cancelled by user")
+	}
+	return nil
 }
 
 // --- Handlers ---
@@ -262,12 +374,12 @@ func (s *Server) handlePrinters(w http.ResponseWriter, r *http.Request) {
 
 	printers, err := s.printerService.ListSharedPrinters()
 	if err != nil {
-		s.Logger(fmt.Sprintf("❌ Failed to list printers: %v", err))
+		s.Logger(fmt.Sprintf("Failed to list printers: %v", err))
 		http.Error(w, fmt.Sprintf("Failed to list printers: %v", err), http.StatusInternalServerError)
 		return
 	}
 
-	s.Logger(fmt.Sprintf("📋 Listed %d printer(s)", len(printers)))
+	s.Logger(fmt.Sprintf("Listed %d printer(s)", len(printers)))
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(printers)
 }
@@ -329,7 +441,7 @@ func (s *Server) handlePrint(w http.ResponseWriter, r *http.Request) {
 			tmpFile, err := os.CreateTemp("", "takeprint-*.pdf")
 			if err != nil {
 				part.Close()
-				s.Logger(fmt.Sprintf("❌ Failed to create temp file: %v", err))
+				s.Logger(fmt.Sprintf("Failed to create temp file: %v", err))
 				http.Error(w, "Server error", http.StatusInternalServerError)
 				return
 			}
@@ -340,7 +452,7 @@ func (s *Server) handlePrint(w http.ResponseWriter, r *http.Request) {
 			part.Close()
 			if err != nil {
 				os.Remove(tmpPath)
-				s.Logger(fmt.Sprintf("❌ Failed to save uploaded file: %v", err))
+				s.Logger(fmt.Sprintf("Failed to save uploaded file: %v", err))
 				http.Error(w, "Failed to save file", http.StatusInternalServerError)
 				return
 			}
@@ -393,7 +505,7 @@ func (s *Server) handlePrint(w http.ResponseWriter, r *http.Request) {
 	// Verify the printer is actually shared.
 	if !s.printerService.IsPrinterShared(printerName) {
 		os.Remove(tmpPath)
-		s.Logger(fmt.Sprintf("⚠️ Blocked print job targeting unshared printer: %s", printerName))
+		s.Logger(fmt.Sprintf("Blocked print job targeting unshared printer: %s", printerName))
 		http.Error(w, "Target printer is not shared", http.StatusForbidden)
 		return
 	}
@@ -407,7 +519,7 @@ func (s *Server) handlePrint(w http.ResponseWriter, r *http.Request) {
 		Duplex:      duplex,
 	}
 
-	s.Logger(fmt.Sprintf("📥 Received print job: %s → %s (Pages: %s, Color: %s, Copies: %d, Orientation: %s, PaperSize: %s, Duplex: %s)",
+	s.Logger(fmt.Sprintf("Received print job: %s -> %s (Pages: %s, Color: %s, Copies: %d, Orientation: %s, PaperSize: %s, Duplex: %s)",
 		headerFilename, printerName, opts.Pages, opts.Color, opts.Copies, opts.Orientation, opts.PaperSize, opts.Duplex))
 
 	// Track job
@@ -426,6 +538,10 @@ func (s *Server) handlePrint(w http.ResponseWriter, r *http.Request) {
 		Duplex:      opts.Duplex,
 	}
 	s.addJob(job)
+
+	s.activeJobsMu.Lock()
+	s.activeJobs[jobID] = filepath.Base(tmpPath)
+	s.activeJobsMu.Unlock()
 
 	// Queue the print job for sequential execution
 	s.printQueue <- pendingJob{

@@ -26,12 +26,12 @@ export default function LogConsole() {
       } else {
         // Mock logs for development outside Wails.
         setLogs([
-          { timestamp: '20:30:01', message: '🚀 TakePrint starting up...', level: 'info' },
-          { timestamp: '20:30:02', message: '📡 mDNS broadcasting \'_localshareprint._tcp\' on 192.168.1.42:8080', level: 'info' },
+          { timestamp: '20:30:01', message: 'TakePrint starting up...', level: 'info' },
+          { timestamp: '20:30:02', message: 'mDNS broadcasting \'_localshareprint._tcp\' on 192.168.1.42:8080', level: 'info' },
           { timestamp: '20:30:02', message: 'mDNS service started successfully', level: 'success' },
-          { timestamp: '20:30:03', message: '🌐 HTTP server listening on :8080', level: 'info' },
+          { timestamp: '20:30:03', message: 'HTTP server listening on :8080', level: 'info' },
           { timestamp: '20:30:03', message: 'HTTP server started on :8080', level: 'success' },
-          { timestamp: '20:30:15', message: '📋 Fetched 3 printer(s)', level: 'info' },
+          { timestamp: '20:30:15', message: 'Fetched 3 printer(s)', level: 'info' },
         ]);
       }
     };

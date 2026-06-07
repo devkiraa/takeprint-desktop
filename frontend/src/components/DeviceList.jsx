@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
  * DeviceList — Displays connected remote TakePrint servers and allows
  * scanning for / adding new devices on the local network.
  */
-export default function DeviceList({ remotePrinters = [], onRemotePrintersUpdate }) {
+export default function DeviceList({ remotePrinters = [], onRemotePrintersUpdate, collapsed, onToggleCollapse }) {
   const [devices, setDevices] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showScanModal, setShowScanModal] = useState(false);
@@ -129,8 +129,8 @@ export default function DeviceList({ remotePrinters = [], onRemotePrintersUpdate
   return (
     <div className="flex flex-col h-full">
       {/* Section Header */}
-      <div className="flex items-center justify-between mb-4 px-1">
-        <div className="flex items-center gap-2.5">
+      <div className={`flex items-center justify-between px-1 ${collapsed ? '' : 'mb-4'}`}>
+        <div onClick={onToggleCollapse} className="flex items-center gap-2.5 cursor-pointer hover:opacity-80 select-none">
           <div className="w-8 h-8 rounded-lg bg-accent-500/15 flex items-center justify-center">
             <svg className="w-4 h-4 text-accent-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M9 17.25v1.007a3 3 0 01-.879 2.122L7.5 21h9l-.621-.621A3 3 0 0115 18.257V17.25m6-12V15a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 15V5.25A2.25 2.25 0 015.25 3h13.5A2.25 2.25 0 0121 5.25z" />
@@ -142,21 +142,27 @@ export default function DeviceList({ remotePrinters = [], onRemotePrintersUpdate
           <span className="text-xs font-medium text-slate-500 bg-surface-700 px-2 py-0.5 rounded-full">
             {devices.length}
           </span>
-        </div>
-        <button
-          onClick={() => setShowScanModal(true)}
-          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border border-accent-500/30 bg-accent-500/10 text-accent-400 hover:bg-accent-500/20 transition-all duration-200 cursor-pointer"
-          title="Add a new TakePrint device"
-        >
-          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+          <svg className={`w-3.5 h-3.5 text-slate-500 transition-transform duration-200 ${collapsed ? '-rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
           </svg>
-          <span className="text-[10px] font-semibold uppercase tracking-wider">Add</span>
-        </button>
+        </div>
+        {!collapsed && (
+          <button
+            onClick={() => setShowScanModal(true)}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border border-accent-500/30 bg-accent-500/10 text-accent-400 hover:bg-accent-500/20 transition-all duration-200 cursor-pointer"
+            title="Add a new TakePrint device"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+            </svg>
+            <span className="text-[10px] font-semibold uppercase tracking-wider">Add</span>
+          </button>
+        )}
       </div>
 
       {/* Device Cards */}
-      <div className="flex-1 overflow-y-auto space-y-2 pr-1">
+      {!collapsed && (
+        <div className="flex-1 overflow-y-auto space-y-2 pr-1">
         {loading && devices.length === 0 && (
           <div className="space-y-2">
             {[1, 2].map((i) => (
@@ -268,6 +274,7 @@ export default function DeviceList({ remotePrinters = [], onRemotePrintersUpdate
           );
         })}
       </div>
+      )}
 
       {/* Scan Modal */}
       {showScanModal && (
