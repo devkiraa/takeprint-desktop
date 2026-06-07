@@ -94,7 +94,7 @@ func (a *App) CheckForUpdate() (UpdateCheckResult, error) {
 	}, nil
 }
 
-// StartUpdate downloads and runs the installer in the background.
+// StartUpdate downloads the installer in the background.
 func (a *App) StartUpdate(downloadURL string) error {
 	if runtime.GOOS != "windows" {
 		return fmt.Errorf("auto-update is only supported on Windows")
@@ -115,27 +115,42 @@ func (a *App) StartUpdate(downloadURL string) error {
 			return
 		}
 
-		a.addLog("info", "Update downloaded successfully. Launching installer...")
-		wailsRuntime.EventsEmit(a.ctx, "update_status", "launching")
-
-		// Launch the installer detached from the current process
-		cmd := exec.Command(tempFile)
-		cmd.SysProcAttr = &syscall.SysProcAttr{
-			HideWindow:    false,
-			CreationFlags: 0x00000008, // DETACHED_PROCESS
-		}
-
-		err = cmd.Start()
-		if err != nil {
-			a.addLog("error", fmt.Sprintf("Failed to run installer: %v", err))
-			wailsRuntime.EventsEmit(a.ctx, "update_error", err.Error())
-			return
-		}
-
-		// Exit the current app so that the installer doesn't run into file-locking conflicts
-		os.Exit(0)
+		a.addLog("info", "Update downloaded successfully. Ready to install.")
+		wailsRuntime.EventsEmit(a.ctx, "update_status", "ready")
 	}()
 
+	return nil
+}
+
+// LaunchInstaller runs the downloaded installer and exits the application.
+func (a *App) LaunchInstaller() error {
+	if runtime.GOOS != "windows" {
+		return fmt.Errorf("auto-update is only supported on Windows")
+	}
+	tempDir := os.TempDir()
+	tempFile := filepath.Join(tempDir, "TakePrint-Setup.exe")
+
+	if _, err := os.Stat(tempFile); os.IsNotExist(err) {
+		return fmt.Errorf("installer file not found: %s", tempFile)
+	}
+
+	a.addLog("info", "Launching installer...")
+
+	// Launch the installer detached from the current process
+	cmd := exec.Command(tempFile)
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		HideWindow:    false,
+		CreationFlags: 0x00000008, // DETACHED_PROCESS
+	}
+
+	err := cmd.Start()
+	if err != nil {
+		a.addLog("error", fmt.Sprintf("Failed to run installer: %v", err))
+		return err
+	}
+
+	// Exit the current app so that the installer doesn't run into file-locking conflicts
+	os.Exit(0)
 	return nil
 }
 

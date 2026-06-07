@@ -802,7 +802,7 @@ function SettingsView({
 
 
 function UpdateChecker({ currentVersion }) {
-  const [status, setStatus] = useState('idle'); // 'idle' | 'checking' | 'latest' | 'available' | 'downloading' | 'installing' | 'error'
+  const [status, setStatus] = useState('idle'); // 'idle' | 'checking' | 'latest' | 'available' | 'downloading' | 'ready' | 'installing' | 'error'
   const [latestInfo, setLatestInfo] = useState(null);
   const [progress, setProgress] = useState(0);
   const [errorMsg, setErrorMsg] = useState('');
@@ -816,6 +816,8 @@ function UpdateChecker({ currentVersion }) {
       window.runtime.EventsOn('update_status', (s) => {
         if (s === 'launching') {
           setStatus('installing');
+        } else if (s === 'ready') {
+          setStatus('ready');
         }
       });
       window.runtime.EventsOn('update_error', (err) => {
@@ -873,9 +875,25 @@ function UpdateChecker({ currentVersion }) {
         setProgress(p);
         if (p >= 100) {
           clearInterval(interval);
-          setStatus('installing');
+          setStatus('ready');
         }
       }, 100);
+    }
+  };
+
+  const handleLaunch = async () => {
+    setStatus('installing');
+    if (window.go?.main?.App?.LaunchInstaller) {
+      try {
+        await window.go.main.App.LaunchInstaller();
+      } catch (err) {
+        setStatus('error');
+        setErrorMsg(err.toString());
+      }
+    } else {
+      // Mock for development
+      alert("Launching installer mock...");
+      setStatus('idle');
     }
   };
 
@@ -896,6 +914,11 @@ function UpdateChecker({ currentVersion }) {
           {status === 'downloading' && (
             <span className="text-[10px] text-slate-400 mt-0.5">
               Downloading installer: {Math.round(progress)}%
+            </span>
+          )}
+          {status === 'ready' && (
+            <span className="text-[10px] text-success-400 mt-0.5 font-semibold animate-pulse">
+              Update downloaded! Ready to install.
             </span>
           )}
           {status === 'installing' && (
@@ -925,6 +948,25 @@ function UpdateChecker({ currentVersion }) {
             className="px-3.5 py-1.5 rounded-lg bg-accent-500 hover:bg-accent-600 text-white text-[11px] font-semibold transition-all cursor-pointer shadow-lg shadow-accent-500/10"
           >
             Update Now
+          </button>
+        )}
+
+        {status === 'downloading' && (
+          <div className="relative overflow-hidden px-3.5 py-1.5 rounded-lg bg-surface-800 border border-surface-700/50 text-slate-300 text-[11px] font-semibold min-w-[120px] text-center select-none">
+            <div
+              className="absolute left-0 top-0 bottom-0 bg-accent-500/20 transition-all duration-300"
+              style={{ width: `${progress}%` }}
+            />
+            <span className="relative z-10">Downloading {Math.round(progress)}%</span>
+          </div>
+        )}
+
+        {status === 'ready' && (
+          <button
+            onClick={handleLaunch}
+            className="px-3.5 py-1.5 rounded-lg bg-success-500 hover:bg-success-600 text-white text-[11px] font-semibold transition-all cursor-pointer shadow-lg shadow-success-500/10"
+          >
+            Restart & Install
           </button>
         )}
       </div>

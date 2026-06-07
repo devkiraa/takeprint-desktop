@@ -91,13 +91,13 @@ jobs:
           $wailsJson.info.productVersion = $cleanVersion
           $wailsJson | ConvertTo-Json -Depth 10 | Out-File wails.json -Encoding utf8
           
-          # Update version.go AppVersion constant
+                    # Update version.go AppVersion constant
           $versionGo = @"
           package main
           
           // AppVersion represents the compiled version of the application.
           // This is overwritten dynamically during the GitHub Release workflow.
-          const AppVersion = "`$cleanVersion"
+          const AppVersion = "$cleanVersion"
           "@
           $versionGo | Out-File version.go -Encoding utf8
 

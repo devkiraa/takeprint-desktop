@@ -78,6 +78,10 @@ export function IsAutoLaunchEnabled() {
   return window['go']['main']['App']['IsAutoLaunchEnabled']();
 }
 
+export function LaunchInstaller() {
+  return window['go']['main']['App']['LaunchInstaller']();
+}
+
 export function PrintToRemote(arg1, arg2, arg3, arg4, arg5, arg6) {
   return window['go']['main']['App']['PrintToRemote'](arg1, arg2, arg3, arg4, arg5, arg6);
 }

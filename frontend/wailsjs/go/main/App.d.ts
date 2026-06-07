@@ -44,6 +44,8 @@ export function InstallRemotePrinter(arg1:string,arg2:string,arg3:number,arg4:st
 
 export function IsAutoLaunchEnabled():Promise<boolean>;
 
+export function LaunchInstaller():Promise<void>;
+
 export function PrintToRemote(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:number):Promise<void>;
 
 export function RemoveRemoteDevice(arg1:string):Promise<void>;
