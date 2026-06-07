@@ -3,7 +3,6 @@
 package printer
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -12,32 +11,205 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unsafe"
 )
 
-// psPrinter is the JSON shape returned by PowerShell's Get-Printer.
-type psPrinter struct {
-	Name          string `json:"Name"`
-	PrinterStatus int    `json:"PrinterStatus"`
-	Type          int    `json:"Type"`
+// Win32 Printer Status constants
+const (
+	PRINTER_STATUS_PAUSED            = 0x00000001
+	PRINTER_STATUS_ERROR             = 0x00000002
+	PRINTER_STATUS_PENDING_DELETION  = 0x00000004
+	PRINTER_STATUS_PAPER_JAM         = 0x00000008
+	PRINTER_STATUS_PAPER_OUT         = 0x00000010
+	PRINTER_STATUS_MANUAL_FEED       = 0x00000020
+	PRINTER_STATUS_PAPER_PROBLEM     = 0x00000040
+	PRINTER_STATUS_OFFLINE           = 0x00000080
+	PRINTER_STATUS_IO_ACTIVE         = 0x00000100
+	PRINTER_STATUS_BUSY              = 0x00000200
+	PRINTER_STATUS_PRINTING          = 0x00000400
+	PRINTER_STATUS_OUTPUT_BIN_FULL   = 0x00000800
+	PRINTER_STATUS_NOT_AVAILABLE     = 0x00001000
+	PRINTER_STATUS_WAITING           = 0x00002000
+	PRINTER_STATUS_PROCESSING        = 0x00004000
+	PRINTER_STATUS_INITIALIZING      = 0x00008000
+	PRINTER_STATUS_WARMING_UP        = 0x00010000
+	PRINTER_STATUS_TONER_LOW         = 0x00020000
+	PRINTER_STATUS_NO_TONER          = 0x00040000
+	PRINTER_STATUS_PAGE_PUNT         = 0x00080000
+	PRINTER_STATUS_USER_INTERVENTION = 0x00100000
+	PRINTER_STATUS_OUT_OF_MEMORY     = 0x00200000
+	PRINTER_STATUS_DOOR_OPEN         = 0x00400000
+	PRINTER_STATUS_SERVER_UNKNOWN    = 0x00800000
+	PRINTER_STATUS_POWER_SAVE        = 0x01000000
+)
+
+const (
+	PRINTER_ENUM_LOCAL       = 0x00000002
+	PRINTER_ENUM_CONNECTIONS = 0x00000004
+)
+
+type PRINTER_INFO_2W struct {
+	ServerName         *uint16
+	PrinterName        *uint16
+	ShareName          *uint16
+	PortName           *uint16
+	DriverName         *uint16
+	Comment            *uint16
+	Location           *uint16
+	DevMode            uintptr
+	SepFile            *uint16
+	PrintProcessor     *uint16
+	Datatype           *uint16
+	Parameters         *uint16
+	SecurityDescriptor uintptr
+	Attributes         uint32
+	Priority           uint32
+	DefaultPriority    uint32
+	StartTime          uint32
+	UntilTime          uint32
+	Status             uint32
+	JobsCount          uint32
+	AveragePPM         uint32
 }
 
-// statusMap translates the PrinterStatus integer codes from Get-Printer / CIM_Printer.
-var statusMap = map[int]string{
-	0: "Normal",
-	1: "Unknown",
-	2: "Idle",
-	3: "Printing",
-	4: "Warming Up",
-	5: "Stopped",
-	6: "Offline",
-	7: "Paused",
+var (
+	winspoolW             = syscall.NewLazyDLL("winspool.drv")
+	procEnumPrinters      = winspoolW.NewProc("EnumPrintersW")
+	procGetDefaultPrinter = winspoolW.NewProc("GetDefaultPrinterW")
+)
+
+func utf16PtrToString(p *uint16) string {
+	if p == nil {
+		return ""
+	}
+	var buf []uint16
+	ptr := uintptr(unsafe.Pointer(p))
+	for {
+		val := *(*uint16)(unsafe.Pointer(ptr))
+		if val == 0 {
+			break
+		}
+		buf = append(buf, val)
+		ptr += 2
+	}
+	return syscall.UTF16ToString(buf)
+}
+
+func enumPrintersW(flags uint32) ([]PRINTER_INFO_2W, error) {
+	var needed, returned uint32
+	procEnumPrinters.Call(
+		uintptr(flags),
+		0,
+		2,
+		0,
+		0,
+		uintptr(unsafe.Pointer(&needed)),
+		uintptr(unsafe.Pointer(&returned)),
+	)
+	if needed == 0 {
+		return nil, nil
+	}
+
+	buf := make([]byte, needed)
+	r1, _, err := procEnumPrinters.Call(
+		uintptr(flags),
+		0,
+		2,
+		uintptr(unsafe.Pointer(&buf[0])),
+		uintptr(needed),
+		uintptr(unsafe.Pointer(&needed)),
+		uintptr(unsafe.Pointer(&returned)),
+	)
+	if r1 == 0 {
+		if err != nil && err != syscall.Errno(0) {
+			return nil, err
+		}
+		return nil, fmt.Errorf("EnumPrintersW failed")
+	}
+
+	if returned == 0 {
+		return nil, nil
+	}
+
+	infos := unsafe.Slice((*PRINTER_INFO_2W)(unsafe.Pointer(&buf[0])), returned)
+	res := make([]PRINTER_INFO_2W, len(infos))
+	copy(res, infos)
+	return res, nil
+}
+
+func getDefaultPrinterW() (string, error) {
+	var size uint32
+	procGetDefaultPrinter.Call(
+		0,
+		uintptr(unsafe.Pointer(&size)),
+	)
+	if size == 0 {
+		return "", nil
+	}
+
+	buf := make([]uint16, size)
+	r1, _, err := procGetDefaultPrinter.Call(
+		uintptr(unsafe.Pointer(&buf[0])),
+		uintptr(unsafe.Pointer(&size)),
+	)
+	if r1 == 0 {
+		if err != nil && err != syscall.Errno(0) {
+			return "", err
+		}
+		return "", fmt.Errorf("GetDefaultPrinterW failed")
+	}
+
+	return syscall.UTF16ToString(buf), nil
+}
+
+func translateStatus(status uint32) string {
+	if status == 0 {
+		return "Idle"
+	}
+	if status&PRINTER_STATUS_ERROR != 0 {
+		return "Error"
+	}
+	if status&PRINTER_STATUS_PAPER_JAM != 0 {
+		return "Paper Jam"
+	}
+	if status&PRINTER_STATUS_PAPER_OUT != 0 {
+		return "Paper Out"
+	}
+	if status&PRINTER_STATUS_OFFLINE != 0 {
+		return "Offline"
+	}
+	if status&PRINTER_STATUS_PAUSED != 0 {
+		return "Paused"
+	}
+	if status&PRINTER_STATUS_PRINTING != 0 {
+		return "Printing"
+	}
+	if status&PRINTER_STATUS_WARMING_UP != 0 {
+		return "Warming Up"
+	}
+	if status&PRINTER_STATUS_BUSY != 0 {
+		return "Busy"
+	}
+	if status&PRINTER_STATUS_INITIALIZING != 0 {
+		return "Initializing"
+	}
+	if status&PRINTER_STATUS_TONER_LOW != 0 {
+		return "Toner Low"
+	}
+	if status&PRINTER_STATUS_NO_TONER != 0 {
+		return "No Toner"
+	}
+	if status&PRINTER_STATUS_DOOR_OPEN != 0 {
+		return "Door Open"
+	}
+	return "Normal"
 }
 
 // sumatraOnce ensures we only try to install SumatraPDF once per session.
 var sumatraOnce sync.Once
 var sumatraInstallErr error
 
-// ListPrinters enumerates installed printers via PowerShell's Get-Printer.
+// ListPrinters enumerates installed printers natively via Win32 Spooler.
 func (s *Service) ListPrinters() ([]PrinterInfo, error) {
 	s.mu.Lock()
 	if len(s.cachedPrinters) > 0 && time.Since(s.lastCacheTime) < 10*time.Second {
@@ -48,65 +220,36 @@ func (s *Service) ListPrinters() ([]PrinterInfo, error) {
 	}
 	s.mu.Unlock()
 
-	// Wrap in @() to guarantee an array even for a single printer.
-	psCmd := `@(Get-Printer) | Select-Object Name, PrinterStatus, Type | ConvertTo-Json -Depth 2 -Compress`
-	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", psCmd)
-	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
-	output, err := cmd.Output()
+	defaultName, _ := getDefaultPrinterW()
+	defaultName = strings.TrimSpace(defaultName)
+
+	psPrinters, err := enumPrintersW(PRINTER_ENUM_LOCAL | PRINTER_ENUM_CONNECTIONS)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list printers: %w", err)
+		return nil, fmt.Errorf("failed to list printers natively: %w", err)
 	}
-
-	raw := strings.TrimSpace(string(output))
-	if raw == "" {
-		return nil, nil
-	}
-
-	var psPrinters []psPrinter
-
-	// PowerShell may return a single object or an array.
-	if strings.HasPrefix(raw, "[") {
-		if err := json.Unmarshal([]byte(raw), &psPrinters); err != nil {
-			return nil, fmt.Errorf("failed to parse printer list: %w", err)
-		}
-	} else {
-		var single psPrinter
-		if err := json.Unmarshal([]byte(raw), &single); err != nil {
-			return nil, fmt.Errorf("failed to parse printer: %w", err)
-		}
-		psPrinters = append(psPrinters, single)
-	}
-
-	// Determine default printer.
-	defaultCmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command",
-		`(Get-CimInstance -ClassName Win32_Printer -Filter "Default=True").Name`)
-	defaultCmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
-	defaultOut, _ := defaultCmd.Output()
-	defaultName := strings.TrimSpace(string(defaultOut))
 
 	printers := make([]PrinterInfo, 0, len(psPrinters))
 	for _, p := range psPrinters {
-		status, ok := statusMap[p.PrinterStatus]
-		if !ok {
-			status = "Unknown"
-		}
+		name := utf16PtrToString(p.PrinterName)
+		status := translateStatus(p.Status)
+
 		// Load supplies from the service map or generate defaults.
 		s.mu.Lock()
-		supplies, exists := s.supplies[p.Name]
+		supplies, exists := s.supplies[name]
 		if !exists {
-			supplies = GenerateDefaultSupplies(p.Name)
-			s.supplies[p.Name] = supplies
+			supplies = GenerateDefaultSupplies(name)
+			s.supplies[name] = supplies
 		}
-		if IsVirtualPrinter(p.Name) {
+		if IsVirtualPrinter(name) {
 			supplies = nil
 		}
 		s.mu.Unlock()
 
 		printers = append(printers, PrinterInfo{
-			Name:      p.Name,
+			Name:      name,
 			Status:    status,
-			IsDefault: strings.EqualFold(p.Name, defaultName),
-			Shared:    s.IsPrinterShared(p.Name),
+			IsDefault: strings.EqualFold(name, defaultName),
+			Shared:    s.IsPrinterShared(name),
 			Supplies:  supplies,
 		})
 	}
