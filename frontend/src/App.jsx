@@ -152,9 +152,13 @@ export default function App() {
           setActiveJobProgress(progress);
         }
       });
+      window.runtime.EventsOn('open-settings-update', () => {
+        setShowSettings(true);
+      });
       return () => {
         if (window.runtime?.EventsOff) {
           window.runtime.EventsOff('print-progress');
+          window.runtime.EventsOff('open-settings-update');
         }
       };
     }

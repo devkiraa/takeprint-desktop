@@ -2,6 +2,7 @@ package main
 
 import (
 	_ "embed"
+	"fmt"
 	"runtime"
 
 	"github.com/energye/systray"
@@ -12,7 +13,7 @@ import (
 var trayIconData []byte
 
 // initSystemTray starts the system tray icon in a separate goroutine.
-// It provides "Show Window" and "Exit" menu items.
+// It provides "Show Window", "Check for Updates", and "Exit" menu items.
 func (a *App) initSystemTray() {
 	go systray.Run(a.onTrayReady, a.onTrayExit)
 }
@@ -29,6 +30,10 @@ func (a *App) onTrayReady() {
 
 	// "Show Window" menu item
 	mShow := systray.AddMenuItem("Show Window", "Show the TakePrint window")
+
+	// "Check for Updates" menu item
+	mCheckUpdate := systray.AddMenuItem("Check for Updates", "Check if a new version of TakePrint is available")
+
 	systray.AddSeparator()
 
 	// "Exit" menu item
@@ -57,6 +62,10 @@ func (a *App) onTrayReady() {
 		}
 	})
 
+	mCheckUpdate.Click(func() {
+		go a.checkUpdateFromTray()
+	})
+
 	mExit.Click(func() {
 		a.shouldQuit = true
 		systray.Quit()
@@ -70,3 +79,50 @@ func (a *App) onTrayReady() {
 func (a *App) onTrayExit() {
 	// Cleanup is handled by the Wails OnShutdown callback.
 }
+
+// checkUpdateFromTray queries the update status and prompts the user.
+func (a *App) checkUpdateFromTray() {
+	res, err := a.CheckForUpdate()
+	if err != nil {
+		if a.ctx != nil {
+			_, _ = wailsRuntime.MessageDialog(a.ctx, wailsRuntime.MessageDialogOptions{
+				Type:          wailsRuntime.ErrorDialog,
+				Title:         "Update Check Failed",
+				Message:       fmt.Sprintf("Failed to check for updates:\n\n%v", err),
+				Buttons:       []string{"OK"},
+				DefaultButton: "OK",
+			})
+		}
+		return
+	}
+
+	if !res.UpdateAvailable {
+		if a.ctx != nil {
+			_, _ = wailsRuntime.MessageDialog(a.ctx, wailsRuntime.MessageDialogOptions{
+				Type:          wailsRuntime.InfoDialog,
+				Title:         "Up to Date",
+				Message:       fmt.Sprintf("TakePrint is up to date.\n\nYou are running the latest version (v%s).", AppVersion),
+				Buttons:       []string{"OK"},
+				DefaultButton: "OK",
+			})
+		}
+		return
+	}
+
+	if a.ctx != nil {
+		selection, err := wailsRuntime.MessageDialog(a.ctx, wailsRuntime.MessageDialogOptions{
+			Type:          wailsRuntime.QuestionDialog,
+			Title:         "Update Available",
+			Message:       fmt.Sprintf("A new version (%s) of TakePrint is available.\n\nWould you like to open settings and install it?", res.LatestVersion),
+			Buttons:       []string{"Yes", "No"},
+			DefaultButton: "Yes",
+			CancelButton:  "No",
+		})
+		if err == nil && selection == "Yes" {
+			a.windowHidden = false
+			wailsRuntime.WindowShow(a.ctx)
+			wailsRuntime.EventsEmit(a.ctx, "open-settings-update", res)
+		}
+	}
+}
+
