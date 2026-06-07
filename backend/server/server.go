@@ -83,6 +83,7 @@ func New(addr string, authToken string, ps *printer.Service, logger func(string)
 	mux.HandleFunc("/printers", s.handlePrinters)
 	mux.HandleFunc("/print", s.handlePrint)
 	mux.HandleFunc("/jobs", s.handleJobs)
+	mux.HandleFunc("/jobs/cancel", s.handleCancelJob)
 
 	s.httpServer = &http.Server{
 		Addr:         addr,
@@ -361,6 +362,42 @@ func (s *Server) handleJobs(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(s.GetJobs())
+}
+
+func (s *Server) handleCancelJob(w http.ResponseWriter, r *http.Request) {
+	if !s.verifyToken(w, r) {
+		return
+	}
+	if r.Method != http.MethodPost && r.Method != http.MethodDelete {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	jobID := r.URL.Query().Get("id")
+	if jobID == "" {
+		// Try parsing from JSON body
+		var body struct {
+			ID string `json:"id"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err == nil {
+			jobID = body.ID
+		}
+	}
+
+	if jobID == "" {
+		http.Error(w, "Missing job ID", http.StatusBadRequest)
+		return
+	}
+
+	err := s.CancelJob(jobID)
+	if err != nil {
+		s.Logger(fmt.Sprintf("Failed to cancel job %s: %v", jobID, err))
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "message": "Job cancellation request sent"})
 }
 
 func (s *Server) handlePrinters(w http.ResponseWriter, r *http.Request) {

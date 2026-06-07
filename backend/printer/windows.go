@@ -39,6 +39,15 @@ var sumatraInstallErr error
 
 // ListPrinters enumerates installed printers via PowerShell's Get-Printer.
 func (s *Service) ListPrinters() ([]PrinterInfo, error) {
+	s.mu.Lock()
+	if len(s.cachedPrinters) > 0 && time.Since(s.lastCacheTime) < 10*time.Second {
+		printersCopy := make([]PrinterInfo, len(s.cachedPrinters))
+		copy(printersCopy, s.cachedPrinters)
+		s.mu.Unlock()
+		return printersCopy, nil
+	}
+	s.mu.Unlock()
+
 	// Wrap in @() to guarantee an array even for a single printer.
 	psCmd := `@(Get-Printer) | Select-Object Name, PrinterStatus, Type | ConvertTo-Json -Depth 2 -Compress`
 	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", psCmd)
@@ -101,6 +110,13 @@ func (s *Service) ListPrinters() ([]PrinterInfo, error) {
 			Supplies:  supplies,
 		})
 	}
+
+	s.mu.Lock()
+	s.cachedPrinters = make([]PrinterInfo, len(printers))
+	copy(s.cachedPrinters, printers)
+	s.lastCacheTime = time.Now()
+	s.mu.Unlock()
+
 	return printers, nil
 }
 

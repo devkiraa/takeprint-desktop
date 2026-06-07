@@ -6,10 +6,20 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"time"
 )
 
 // ListPrinters enumerates installed printers via CUPS (lpstat).
 func (s *Service) ListPrinters() ([]PrinterInfo, error) {
+	s.mu.Lock()
+	if len(s.cachedPrinters) > 0 && time.Since(s.lastCacheTime) < 10*time.Second {
+		printersCopy := make([]PrinterInfo, len(s.cachedPrinters))
+		copy(printersCopy, s.cachedPrinters)
+		s.mu.Unlock()
+		return printersCopy, nil
+	}
+	s.mu.Unlock()
+
 	// Get list of printers.
 	cmd := exec.Command("lpstat", "-p")
 	output, err := cmd.Output()
@@ -66,6 +76,13 @@ func (s *Service) ListPrinters() ([]PrinterInfo, error) {
 			Supplies:  supplies,
 		})
 	}
+
+	s.mu.Lock()
+	s.cachedPrinters = make([]PrinterInfo, len(printers))
+	copy(s.cachedPrinters, printers)
+	s.lastCacheTime = time.Now()
+	s.mu.Unlock()
+
 	return printers, nil
 }
 

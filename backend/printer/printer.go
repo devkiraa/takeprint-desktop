@@ -3,6 +3,7 @@ package printer
 import (
 	"strings"
 	"sync"
+	"time"
 )
 
 // SupplyInfo represents a cartridge supply level (e.g. Cyan, Magenta, Yellow, Black).
@@ -37,6 +38,8 @@ type Service struct {
 	disabledPrinters  map[string]bool
 	supplies          map[string][]SupplyInfo
 	virtualPrinterDir string
+	cachedPrinters    []PrinterInfo
+	lastCacheTime     time.Time
 	mu                sync.Mutex
 }
 
@@ -67,6 +70,7 @@ func (s *Service) SetSupplies(supplies map[string][]SupplyInfo) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.supplies = supplies
+	s.lastCacheTime = time.Time{} // Invalidate printer list cache
 }
 
 // GetSupplies returns the current cartridge levels map.
@@ -160,6 +164,7 @@ func (s *Service) TogglePrinterShare(name string, shared bool) {
 	} else {
 		s.disabledPrinters[name] = true
 	}
+	s.lastCacheTime = time.Time{} // Invalidate printer list cache
 }
 
 // IsPrinterShared checks if a printer is currently shared.
